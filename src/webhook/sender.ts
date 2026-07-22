@@ -44,10 +44,18 @@ function buildPayload(article: Article, feedTitle: string, template: Webhook['te
       return {
         msg_type: 'text',
         content: {
-          text: `【${feedTitle}】${article.title}\n${article.created_at || ''}\n\n${stripHtml(bodyContent).slice(0, 4000)}\n\n${article.link}`,
+          text: `📰 ${feedTitle}\n${'━'.repeat(20)}\n${article.title}\n🕐 ${formatDate(article.created_at)}\n\n${stripHtml(bodyContent).slice(0, 4000)}\n${'━'.repeat(20)}\n🔗 ${article.link}`,
         },
       };
   }
+}
+
+function formatDate(dateStr: string | null | undefined): string {
+  if (!dateStr) return '';
+  const d = new Date(dateStr.replace(' ', 'T') + '+08:00');
+  if (isNaN(d.getTime())) return dateStr;
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}/${pad(d.getMonth() + 1)}/${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
 }
 
 /** 移除 HTML 标签，保留纯文本，简单排版 */
