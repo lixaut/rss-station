@@ -1,0 +1,7 @@
+node_modules/
+dist/
+.env
+data/          # SQLite 数据库文件
+*.db
+.DS_Store
+*.log

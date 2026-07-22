@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>RSS Station 管理面板</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <header>
+    <h1>📡 RSS Station</h1>
+    <nav>
+      <button class="tab active" data-tab="subscriptions">订阅管理</button>
+      <button class="tab" data-tab="webhooks">Webhook 配置</button>
+      <button class="tab" data-tab="logs">推送日志</button>
+    </nav>
+  </header>
+
+  <main>
+    <!-- 订阅管理 -->
+    <section id="tab-subscriptions" class="tab-content active">
+      <div class="toolbar">
+        <button id="btn-add-sub" class="btn btn-primary">➕ 添加订阅</button>
+        <button id="btn-trigger-poll" class="btn btn-secondary">🔄 手动轮询</button>
+      </div>
+      <table id="sub-table">
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>名称</th>
+            <th>地址</th>
+            <th>类型</th>
+            <th>间隔(分钟)</th>
+            <th>状态</th>
+            <th>上次抓取</th>
+            <th>操作</th>
+          </tr>
+        </thead>
+        <tbody id="sub-tbody"></tbody>
+      </table>
+    </section>
+
+    <!-- Webhook 配置 -->
+    <section id="tab-webhooks" class="tab-content">
+      <div class="toolbar">
+        <button id="btn-add-webhook" class="btn btn-primary">➕ 添加 Webhook</button>
+      </div>
+      <table id="webhook-table">
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>名称</th>
+            <th>Webhook 地址</th>
+            <th>模板</th>
+            <th>状态</th>
+            <th>操作</th>
+          </tr>
+        </thead>
+        <tbody id="webhook-tbody"></tbody>
+      </table>
+    </section>
+
+    <!-- 推送日志 -->
+    <section id="tab-logs" class="tab-content">
+      <table id="log-table">
+        <thead>
+          <tr>
+            <th>时间</th>
+            <th>标题</th>
+            <th>Webhook</th>
+            <th>状态</th>
+            <th>响应</th>
+          </tr>
+        </thead>
+        <tbody id="log-tbody"></tbody>
+      </table>
+    </section>
+  </main>
+
+  <!-- 添加/编辑订阅弹窗 -->
+  <div id="sub-modal" class="modal" style="display:none">
+    <div class="modal-content">
+      <span class="modal-close">&times;</span>
+      <h2 id="sub-modal-title">添加订阅</h2>
+      <form id="sub-form">
+        <input type="hidden" id="sub-id">
+        <label>名称 <input type="text" id="sub-name" required></label>
+        <label>
+          类型
+          <select id="sub-type">
+            <option value="rss">RSS</option>
+            <option value="scrape">网页抓取 (Scrape)</option>
+          </select>
+        </label>
+        <label>地址 <input type="url" id="sub-url" required placeholder="RSS 或网页地址"></label>
+
+        <div id="scrape-rules-section" style="display:none; border: 1px solid #eee; border-radius: 8px; padding: 12px; background: #fafafa;">
+          <p style="font-weight:600; margin-bottom:8px;">🔍 抓取规则（CSS 选择器）</p>
+          <label>列表容器 <input type="text" id="scrape-list" placeholder="可选: ul.news-list, .article-list (整个列表的容器)"></label>
+          <label>列表项 <input type="text" id="scrape-item" placeholder="如: li, .post-item, article (每条新闻)"></label>
+          <label>标题 <input type="text" id="scrape-title" placeholder="如: h2 a, .title, a"></label>
+          <label>链接 <input type="text" id="scrape-link" placeholder="如: a, a[href] (取 href)"></label>
+          <label>全文内容 <input type="text" id="scrape-content" placeholder="可选: .article-content, #content (详情页正文)"></label>
+          <p style="font-size:12px; color:#999; margin-top:4px;">💡 填写"全文内容"后，系统会自动抓取每篇文章的详情页提取正文</p>
+        </div>
+
+        <label>轮询间隔（分钟） <input type="number" id="sub-interval" value="30" min="1"></label>
+        <button type="submit" class="btn btn-primary">保存</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- 添加/编辑 Webhook 弹窗 -->
+  <div id="webhook-modal" class="modal" style="display:none">
+    <div class="modal-content">
+      <span class="modal-close">&times;</span>
+      <h2 id="webhook-modal-title">添加 Webhook</h2>
+      <form id="webhook-form">
+        <input type="hidden" id="webhook-id">
+        <label>名称 <input type="text" id="webhook-name" required placeholder="如: 钉钉群"></label>
+        <label>Webhook 地址 <input type="url" id="webhook-url" required></label>
+        <label>
+          消息模板
+          <select id="webhook-template">
+            <option value="markdown">Markdown</option>
+            <option value="text">纯文本</option>
+            <option value="json">JSON</option>
+            <option value="feishu">飞书文本</option>
+          </select>
+        </label>
+        <button type="submit" class="btn btn-primary">保存</button>
+      </form>
+    </div>
+  </div>
+
+  <script src="/app.js"></script>
+</body>
+</html>
