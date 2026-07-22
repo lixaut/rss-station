@@ -44,7 +44,7 @@ function buildPayload(article: Article, feedTitle: string, template: Webhook['te
       return {
         msg_type: 'text',
         content: {
-          text: `📰 ${feedTitle}\n${'━'.repeat(20)}\n${article.title}\n🕐 ${formatDate(article.created_at)}\n\n${stripHtml(bodyContent).slice(0, 4000)}\n${'━'.repeat(20)}\n🔗 ${article.link}`,
+          text: `【${feedTitle}】 ${formatDate(article.created_at)}\n\n${article.title}\n\n${stripHtml(bodyContent).slice(0, 4000)}\n\n ${article.link}`,
         },
       };
   }
