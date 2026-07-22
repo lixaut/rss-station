@@ -3,5 +3,7 @@ dist/
 .env
 data/          # SQLite 数据库文件
 *.db
+*.db-shm
+*.db-wal
 .DS_Store
 *.log
