@@ -5,8 +5,9 @@
   "private": true,
   "scripts": {
     "dev": "tsx watch src/index.ts",
-    "build": "tsc",
-    "start": "node dist/index.js"
+    "build": "tsc && cp -r src/admin dist/admin",
+    "start": "node dist/index.js",
+    "start:prod": "npm run build && npm start"
   },
   "dependencies": {
     "axios": "^1.7.0",

@@ -88,6 +88,19 @@ async function pollSubscription(sub: Subscription): Promise<void> {
 
     // 推送
     if (article) {
+      // 标题和内容一样时跳过推送（说明正文抓取失败，内容被标题填充）
+      const content = article.content || article.content_snippet || '';
+      if (!content) {
+        console.log(`[${name}] 跳过推送: "${article.title}" (正文为空)`);
+        markArticlePushed(article.id);
+        continue;
+      }
+      if (content.trim() === article.title.trim()) {
+        console.log(`[${name}] 跳过推送: "${article.title}" (标题与内容相同)`);
+        markArticlePushed(article.id);
+        continue;
+      }
+
       try {
         const results = await pushToAllWebhooks(article, feedTitle);
         const successCount = results.filter((r) => r.success).length;
