@@ -47,9 +47,9 @@ async function pollSubscription(sub: Subscription): Promise<void> {
     return;
   }
 
-  // 检测新文章，最多取前 3 条推送，防止滥用
+  // 检测新文章，最多取前 5 条推送，防止滥用
   console.log(`[${name}] 列表页抓取到 ${items.length} 条`);
-  const newItems = detectNewArticles(subId, items).slice(0, 3);
+  const newItems = detectNewArticles(subId, items).slice(0, 5);
   if (newItems.length === 0) {
     console.log(`[${name}] 无新文章 (缓存 ${getLastGuids(subId).length} 条)`);
     updateLastFetched(subId);
