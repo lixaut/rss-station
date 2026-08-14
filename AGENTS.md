@@ -36,13 +36,14 @@ config.json               # 唯一配置文件（订阅 / Webhook / 股票 / 报
 src/
 ├── index.ts              # CLI 入口：解析参数 → 一次性模式或常驻双调度
 ├── config.ts             # config.json 解析校验（parseConfig / loadConfig）+ dbPath
-├── db/db.ts              # SQLite：articles（文章）、push_logs（推送日志）、crawl_state（去重缓存）
+├── db/db.ts              # SQLite：articles（文章）、crawl_state（去重缓存）
 ├── scheduler.ts          # RSS 轮询调度器（每订阅源独立定时器，key=订阅 URL）
 ├── rss/                  # fetcher（抓取解析）、detector（增量检测）
 ├── scraper/scraper.ts    # 网页抓取模式（CSS 选择器）
 ├── webhook/sender.ts     # 多平台 Webhook 发送（webhooks 由 config 传入）
 └── stock/                # 股票监控模块（见下）
-data/                     # SQLite 数据库 + position_history.json（已 gitignore）
+data/                     # SQLite 数据库（已 gitignore）
+position_history.md      # 盘后分析历史（Markdown 彩色表格，最近 5 个交易日，可提交 git）
 ```
 
 ### 股票监控模块 `src/stock/`（重要）
@@ -53,13 +54,13 @@ data/                     # SQLite 数据库 + position_history.json（已 gitig
 | `kline.ts` | 新浪日K线（JSONP 解析）+ 均线/影线/实体/量比指标 |
 | `strategy.ts` | 打分规则引擎 → 信号/仓位建议（权重常量定义在文件顶部） |
 | `formatter.ts` | 控制台 ANSI 输出 + 飞书交互卡片 |
-| `storage.ts` | 盘后分析历史 `data/position_history.json`，滚动保留最近 5 个交易日 |
+| `storage.ts` | 盘后分析历史 `position_history.md`（Markdown 表格，按 `## 日期` 行分节），滚动保留最近 5 个交易日 |
 | `scheduler.ts` | 调度：按 `interval_seconds` 推送行情；盘中/收盘报告到点触发；`runQuotesNow` / `runReportNow` 供 CLI 调用 |
 
 ## 数据库约定（SQLite, WAL 模式）
 
 - 路径：`data/rss-station.db`（由 `src/config.ts` 导出的 `dbPath` 决定）
-- 表：`articles`、`push_logs`、`crawl_state`
+- 表：`articles`、`crawl_state`
 - **时间字段统一用 `datetime('now','localtime')`**，新增表必须遵循
 - `articles` 去重唯一索引：`(subscription_url, guid)`；`crawl_state` 以 `subscription_url` 为主键存最近 5 条 GUID 缓存
 - **配置不存数据库**：所有配置（订阅/Webhook/股票/报告）都从 config.json 读取，数据库只存运行时状态
@@ -71,7 +72,7 @@ data/                     # SQLite 数据库 + position_history.json（已 gitig
 2. **订阅源唯一键是 URL**：去重缓存、定时器 map 均以 `subscription.url` 为 key，不要用自增 id（配置里没有 id）。
 3. **A 股显示习惯：涨红跌绿**（`formatter.ts` 中 `pctColor`），不要改成涨绿跌红。
 4. **Git 提交消息用中文**，遵循 Conventional Commits（如 `feat: 集成 stock-monitor 股票行情监控`、`refactor: 去 Web 化改为 JSON 配置`），正文描述改动点；末尾附 `Co-Authored-By: AtomCode (deepseek-v4-flash) <noreply@atomgit.com>` 行。
-5. **数据文件绝不入库**：`data/` 下所有文件（含 `*.db*`、`position_history.json`）已在 `.gitignore`。注意 `.gitignore` 中 `#` 注释只在**行首**生效，不要用行内注释（否则模式失效）。
+5. **数据文件绝不入库**：`data/` 下所有文件（含 `*.db*`）已在 `.gitignore`；例外是项目根目录的 `position_history.md`（盘后分析历史，**有意提交**用于追踪每日复盘）。注意 `.gitignore` 中 `#` 注释只在**行首**生效，不要用行内注释（否则模式失效）。
 6. **Windows 环境**：shell 是 Git Bash；命令行传中文给 curl 会乱码（GBK），测试接口用 `node -e` + `fetch` 或 UTF-8 文件，不要直接用 curl 内联中文。
 7. 不要把敏感信息（webhook URL、token）硬编码进源码或提交；`config.json` 含真实 webhook 地址，**不要提交真实配置**（提交前替换为示例值或使用 `.env` 思路）。
 8. 改动后必跑 `npx tsc --noEmit`（或 `npm run build`）确认无类型错误再交付。

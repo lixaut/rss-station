@@ -3,7 +3,7 @@ import path from 'path';
 
 // ===== 类型定义 =====
 
-/** 数据库文件路径（运行时状态：去重缓存、推送历史仍用 SQLite） */
+/** 数据库文件路径（运行时状态：去重缓存仍用 SQLite） */
 export const dbPath = path.resolve(__dirname, '../data/rss-station.db');
 
 export interface ScrapeRuleConfig {

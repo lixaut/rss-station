@@ -1,6 +1,7 @@
 import path from 'path';
 import { loadConfig } from './config';
 import { initDb } from './db/db';
+import { logInfo, logSuccess, logError } from './log';
 import { startScheduler, triggerPoll } from './scheduler';
 import { startStockScheduler, runQuotesNow, runReportNow } from './stock/scheduler';
 
@@ -74,11 +75,7 @@ async function runReportMode(args: CliArgs): Promise<number> {
 
 function runDaemon(args: CliArgs): void {
   const config = loadConfig(args.configPath);
-  console.log(`[配置] 已加载 ${config.subscriptions.length} 个订阅源、${config.webhooks.length} 个 Webhook、${config.stocks.length} 个股票标的`);
-
-  // 初始化数据库（去重缓存 / 推送历史）
-  initDb();
-  console.log('[数据库] 初始化完成');
+  logInfo('system', `已加载 ${config.subscriptions.length} 个订阅源、${config.webhooks.length} 个 Webhook、${config.stocks.length} 个股票标的`);
 
   // 启动 RSS 轮询调度
   startScheduler(config);
@@ -86,7 +83,7 @@ function runDaemon(args: CliArgs): void {
   // 启动股票监控调度
   startStockScheduler(config);
 
-  console.log('[服务] RSS Station 常驻运行中（Ctrl+C 退出）');
+  logSuccess('system', 'RSS Station 常驻运行中（Ctrl+C 退出）');
 }
 
 // ===== 启动 =====
@@ -95,13 +92,17 @@ async function main() {
   const args = parseArgs(process.argv.slice(2));
 
   try {
+    // 所有模式都需要数据库（去重缓存），统一在此初始化（含旧表迁移）
+    initDb();
+    logInfo('system', '数据库初始化完成');
+
     if (args.once) return await runOnceMode(args);
     if (args.poll) return await runPollMode(args);
     if (args.report) return await runReportMode(args);
     runDaemon(args);
     return 0;
   } catch (err) {
-    console.error(`[错误] ${(err as Error).message}`);
+    logError('system', (err as Error).message);
     return 1;
   }
 }

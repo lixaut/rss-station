@@ -12,8 +12,7 @@
 - **🔄 自动轮询检测** — 定时抓取，增量检测新文章（SQLite 去重缓存）
 - **📈 股票行情监控** — 实时行情推送（控制台 / 飞书卡片），支持盘中与收盘盘后分析（均线/形态 + 仓位建议）
 - **🔔 Webhook 推送** — 新文章自动通过 Webhook 推送到多个平台
-- **📜 推送历史** — SQLite 记录每次推送状态，失败可追溯
-- **📦 零安装数据库** — 使用 SQLite 嵌入式数据库，无需安装任何数据库服务
+- **📦 零安装数据库** — 使用 SQLite 嵌入式数据库（仅存去重缓存，无需安装数据库服务，日志走控制台）
 - **⚙️ 纯 JSON 配置** — 无 Web 端，所有配置集中在 `config.json`，改配置即可，无需改代码
 
 ---
@@ -41,7 +40,7 @@ rss-station/
 │   ├── index.ts           # CLI 入口：常驻 / --once / --poll / --report
 │   ├── config.ts          # config.json 解析与校验
 │   ├── db/
-│   │   └── db.ts          # SQLite：去重缓存、文章、推送日志
+│   │   └── db.ts          # SQLite：去重缓存（crawl_state）、文章
 │   ├── rss/
 │   │   ├── fetcher.ts     # 抓取 & 解析 RSS
 │   │   └── detector.ts    # 变更检测（对比新文章）
@@ -57,7 +56,8 @@ rss-station/
 │       ├── formatter.ts   # 控制台 / 飞书卡片格式化
 │       ├── storage.ts     # 盘后分析历史存储
 │       └── scheduler.ts   # 行情推送 + 报告调度
-├── data/                  # SQLite 数据库 + position_history.json（自动生成，已 gitignore）
+├── data/                  # SQLite 数据库（自动生成，已 gitignore）
+├── position_history.md   # 盘后分析历史（Markdown 彩色表格，最近 5 个交易日，可提交 git）
 └── package.json
 ```
 

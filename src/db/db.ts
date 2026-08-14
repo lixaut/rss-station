@@ -2,6 +2,7 @@ import Database from 'better-sqlite3';
 import path from 'path';
 import fs from 'fs';
 import { dbPath } from '../config';
+import { logInfo } from '../log';
 
 // ===== 类型定义 =====
 
@@ -14,14 +15,6 @@ export interface Article {
   pub_date: string | null;
   content: string | null; // 全文（可选，仅 scrape 类型有）
   pushed: number; // 0 | 1
-  created_at: string;
-}
-
-export interface PushLog {
-  id: number;
-  article_id: number | null;
-  status: 'success' | 'fail';
-  response: string;
   created_at: string;
 }
 
@@ -60,18 +53,6 @@ export function initDb(): Database.Database {
       created_at      TEXT    NOT NULL DEFAULT (datetime('now', 'localtime'))
     );
 
-    CREATE UNIQUE INDEX IF NOT EXISTS idx_articles_url_guid
-      ON articles(subscription_url, guid);
-
-    CREATE TABLE IF NOT EXISTS push_logs (
-      id         INTEGER PRIMARY KEY AUTOINCREMENT,
-      article_id INTEGER,
-      status     TEXT    NOT NULL CHECK(status IN ('success','fail')),
-      response   TEXT,
-      created_at TEXT    NOT NULL DEFAULT (datetime('now', 'localtime')),
-      FOREIGN KEY (article_id) REFERENCES articles(id) ON DELETE SET NULL
-    );
-
     CREATE TABLE IF NOT EXISTS crawl_state (
       subscription_url TEXT PRIMARY KEY,
       last_guids       TEXT,
@@ -79,7 +60,59 @@ export function initDb(): Database.Database {
     );
   `);
 
+  // 旧表结构迁移（v0.1 Web 版 → v0.2 去 Web 化）
+  migrateLegacyTables(db);
+
+  // 去重索引：必须在迁移之后创建（旧表 articles 无 subscription_url 列，先迁移重建）
+  db.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_articles_url_guid
+      ON articles(subscription_url, guid);
+  `);
+
   return db;
+}
+
+/**
+ * 迁移旧版数据库表结构：
+ * - articles：subscription_id 列 → subscription_url 列（通过旧 subscriptions 表映射 url）
+ * - push_logs：RSS 推送不再存日志，直接删除旧表
+ * 新库（已含 subscription_url）直接跳过。
+ */
+function migrateLegacyTables(db: Database.Database): void {
+  // articles：旧版使用 subscription_id 列，新版使用 subscription_url
+  const articleCols = db.prepare('PRAGMA table_info(articles)').all() as { name: string }[];
+  if (!articleCols.some((c) => c.name === 'subscription_url')) {
+    logInfo('system', '迁移 articles 表（subscription_id → subscription_url）...');
+    db.exec(`
+      CREATE TABLE articles_new (
+        id               INTEGER PRIMARY KEY AUTOINCREMENT,
+        subscription_url TEXT   NOT NULL,
+        guid             TEXT   NOT NULL,
+        title            TEXT   NOT NULL,
+        link             TEXT   NOT NULL,
+        pub_date         TEXT,
+        content          TEXT,
+        pushed           INTEGER NOT NULL DEFAULT 0,
+        created_at       TEXT   NOT NULL DEFAULT (datetime('now', 'localtime'))
+      );
+
+      CREATE UNIQUE INDEX idx_articles_new_url_guid
+        ON articles_new(subscription_url, guid);
+
+      INSERT OR IGNORE INTO articles_new (id, subscription_url, guid, title, link, pub_date, content, pushed, created_at)
+        SELECT a.id, COALESCE(s.url, 'legacy:' || a.subscription_id), a.guid, a.title, a.link, a.pub_date,
+               COALESCE(a.content, a.content_snippet), a.pushed, a.created_at
+        FROM articles a
+        LEFT JOIN subscriptions s ON s.id = a.subscription_id;
+
+      DROP TABLE articles;
+      ALTER TABLE articles_new RENAME TO articles;
+    `);
+    logInfo('system', 'articles 表迁移完成');
+  }
+
+  // push_logs：RSS 推送不再存日志，删除旧表（含旧版带 webhook_id 的结构）
+  db.exec('DROP TABLE IF EXISTS push_logs');
 }
 
 export function getDb(): Database.Database {
@@ -154,26 +187,4 @@ export function updateLastFetched(subscriptionUrl: string): void {
      ON CONFLICT(subscription_url) DO UPDATE SET
        last_fetched_at = excluded.last_fetched_at`
   ).run(subscriptionUrl);
-}
-
-// ===== 推送日志 =====
-
-export function addPushLog(articleId: number | null, status: 'success' | 'fail', response: string): PushLog {
-  const stmt = getDb().prepare(
-    'INSERT INTO push_logs (article_id, status, response) VALUES (?, ?, ?)'
-  );
-  const result = stmt.run(articleId, status, response);
-  return getDb().prepare('SELECT * FROM push_logs WHERE id = ?').get(result.lastInsertRowid) as PushLog;
-}
-
-export function getPushLogs(limit: number = 50): (PushLog & { article_title: string | null })[] {
-  return getDb().prepare(`
-    SELECT
-      pl.*,
-      a.title AS article_title
-    FROM push_logs pl
-    LEFT JOIN articles a ON a.id = pl.article_id
-    ORDER BY pl.created_at DESC
-    LIMIT ?
-  `).all(limit) as any;
 }

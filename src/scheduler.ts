@@ -1,15 +1,15 @@
 import { AppConfig, SubscriptionConfig, WebhookConfig } from './config';
 import {
-  getLastGuids,
   updateLastFetched,
   updateLastGuids,
   insertArticle,
   markArticlePushed,
 } from './db/db';
+import { logInfo, logSuccess, logWarn, logError } from './log';
 import { fetchFeed } from './rss/fetcher';
 import { scrapePage, fetchArticleContent, ScrapeRule } from './scraper/scraper';
 import { detectNewArticles } from './rss/detector';
-import { pushToAllWebhooks } from './webhook/sender';
+import { pushToAllWebhooks, stripHtml } from './webhook/sender';
 
 /** 每个订阅源的定时器 map（key: 订阅 URL） */
 const timers = new Map<string, ReturnType<typeof setInterval>>();
@@ -19,7 +19,6 @@ const timers = new Map<string, ReturnType<typeof setInterval>>();
  */
 async function pollSubscription(sub: SubscriptionConfig, webhooks: WebhookConfig[]): Promise<void> {
   const { url, name, type, scrape_rules } = sub;
-  console.log(`[${new Date().toLocaleString()}] 正在抓取: ${name} (${url}) [${type}]`);
 
   let feedTitle: string;
   let contentSelector: string | undefined;
@@ -40,33 +39,30 @@ async function pollSubscription(sub: SubscriptionConfig, webhooks: WebhookConfig
       items = feed.items;
     }
   } catch (err) {
-    console.error(`[${name}] 抓取失败:`, (err as Error).message);
+    logError('news', `${name} 抓取失败: ${(err as Error).message}`);
     return;
   }
 
   // 检测新文章，最多取前 5 条推送，防止滥用
-  console.log(`[${name}] 列表页抓取到 ${items.length} 条`);
   const newItems = detectNewArticles(url, items).slice(0, 5);
   if (newItems.length === 0) {
-    console.log(`[${name}] 无新文章 (缓存 ${getLastGuids(url).length} 条)`);
+    logInfo('news', `${name} 无新文章`);
     updateLastFetched(url);
     return;
   }
 
-  console.log(`[${name}] 发现 ${newItems.length} 篇新文章`);
+  logInfo('news', `${name} 发现 ${newItems.length} 篇新文章`);
 
   // 如果有 contentSelector，并行抓取每篇文章的全文
   if (contentSelector) {
-    console.log(`[${name}] 正在抓取 ${newItems.length} 篇文章的全文...`);
     const contents = await Promise.allSettled(
       newItems.map((item) => fetchArticleContent(item.link, contentSelector!))
     );
     contents.forEach((result, i) => {
       if (result.status === 'fulfilled' && result.value) {
         newItems[i].content = result.value;
-        console.log(`[${name}] 文章 ${i + 1}: "${newItems[i].title.slice(0, 40)}..." 正文长度 ${result.value.length} 字符`);
       } else {
-        console.warn(`[${name}] 文章 ${i + 1}: 正文抓取失败`);
+        logWarn('news', `${name} 文章 ${i + 1}: 正文抓取失败`);
       }
     });
   }
@@ -84,15 +80,17 @@ async function pollSubscription(sub: SubscriptionConfig, webhooks: WebhookConfig
 
     // 推送
     if (article) {
-      // 标题和内容一样时跳过推送（说明正文抓取失败，内容被标题填充）
-      const content = article.content || '';
-      if (!content) {
-        console.log(`[${name}] 跳过推送: "${article.title}" (正文为空)`);
+      // 标题和内容一样时跳过推送（说明正文抓取失败，内容被标题填充）。
+      // 注意：content 是 HTML，需先剥离标签得到纯文本再与标题比较，
+      // 否则 `<p>标题</p>` 永远不等于 `标题`，判断会失效。
+      const plainContent = stripHtml(article.content || '').trim();
+      if (!plainContent) {
+        logWarn('news', `${name} 跳过推送: "${article.title}" (正文为空)`);
         markArticlePushed(article.id);
         continue;
       }
-      if (content.trim() === article.title.trim()) {
-        console.log(`[${name}] 跳过推送: "${article.title}" (标题与内容相同)`);
+      if (plainContent === article.title.trim()) {
+        logWarn('news', `${name} 跳过推送: "${article.title}" (标题与内容相同)`);
         markArticlePushed(article.id);
         continue;
       }
@@ -102,12 +100,12 @@ async function pollSubscription(sub: SubscriptionConfig, webhooks: WebhookConfig
         const successCount = results.filter((r) => r.success).length;
         if (successCount > 0) {
           markArticlePushed(article.id);
-          console.log(`[${name}] 推送成功: "${article.title}" -> ${successCount} 个 Webhook`);
+          logSuccess('news', `${name} 推送成功: "${article.title}" -> ${successCount} 个 Webhook`);
         } else {
-          console.warn(`[${name}] 推送失败: "${article.title}"`);
+          logWarn('news', `${name} 推送失败: "${article.title}"`);
         }
       } catch (err) {
-        console.error(`[${name}] 推送异常:`, (err as Error).message);
+        logError('news', `${name} 推送异常: ${(err as Error).message}`);
       }
     }
   }
@@ -124,18 +122,18 @@ async function pollSubscription(sub: SubscriptionConfig, webhooks: WebhookConfig
 async function pollAll(config: AppConfig): Promise<void> {
   const subs = config.subscriptions;
   if (subs.length === 0) {
-    console.log(`[${new Date().toLocaleString()}] 暂无订阅源`);
+    logInfo('news', '暂无订阅源');
     return;
   }
 
-  console.log(`[${new Date().toLocaleString()}] 开始轮询 ${subs.length} 个订阅源...`);
+  logInfo('news', `开始轮询 ${subs.length} 个订阅源...`);
 
   // 并行抓取所有订阅源
   await Promise.allSettled(
     subs.map((sub: SubscriptionConfig) => pollSubscription(sub, config.webhooks))
   );
 
-  console.log(`[${new Date().toLocaleString()}] 本轮轮询结束`);
+  logInfo('news', '本轮轮询结束');
 }
 
 /**
@@ -154,16 +152,16 @@ export function startScheduler(config: AppConfig): void {
 
   const subs = config.subscriptions;
   if (subs.length === 0) {
-    console.log(`[${new Date().toLocaleString()}] 暂无订阅源，调度器待命`);
+    logInfo('system', '暂无订阅源，调度器待命');
     return;
   }
 
-  console.log(`[${new Date().toLocaleString()}] 调度器启动，共 ${subs.length} 个订阅源`);
+  logInfo('system', `调度器启动，共 ${subs.length} 个订阅源`);
 
   for (const sub of subs) {
     const intervalMs = getIntervalMs(sub);
     const minutes = intervalMs / 60000;
-    console.log(`  - ${sub.name} (${sub.type}) 每 ${minutes} 分钟轮询一次`);
+    logInfo('system', `  - ${sub.name} (${sub.type}) 每 ${minutes} 分钟轮询一次`);
 
     // 立即执行一次
     pollSubscription(sub, config.webhooks);

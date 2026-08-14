@@ -1,5 +1,6 @@
 import axios from 'axios';
 import { AppConfig, StockItemConfig, StockPushConfig, DailyReportConfig } from '../config';
+import { logInfo, logSuccess, logError, logBlock } from '../log';
 import { fetchQuotes, StockItem } from './quote';
 import { fetchDailyKlines, computeIndicators } from './kline';
 import { scoreStock, overallPosition } from './strategy';
@@ -23,10 +24,10 @@ interface Pusher {
 
 class ConsolePusher implements Pusher {
   async push(quotes: any): Promise<void> {
-    console.log(formatConsole(quotes));
+    logBlock('stock', '行情推送', formatConsole(quotes));
   }
   async pushReport(report: { console: string }): Promise<void> {
-    console.log(report.console);
+    logBlock('stock', '盘后分析报告', report.console);
   }
 }
 
@@ -92,36 +93,56 @@ function localTimeKey(d: Date): string {
   return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-/** 盘后分析结果的可序列化结构，供本地 JSON 存储（数据不依赖 formatter） */
-function buildReportStorage(items: ReportItem[], overall: number): Record<string, unknown> {
+/** 带符号涨跌幅，如 +0.09% / -1.29%；缺失显示 -- */
+function signedPct(pct: string): string {
+  const t = String(pct ?? '').trim();
+  if (!t || t === '--') return '--';
+  return t.startsWith('-') ? `${t}%` : `+${t}%`;
+}
+
+/** 涨跌幅颜色（A股习惯涨红跌绿）：红 #d33 / 绿 #0a8 / 平黄 #e6a700 */
+function pctColor(pct: string): string {
+  const v = parseFloat(pct);
+  if (v > 0) return '#d33';
+  if (v < 0) return '#0a8';
+  return '#e6a700';
+}
+
+/** 信号颜色：强多/偏多看涨红，强空/偏空看跌绿，中性黄 */
+function signalColor(signal: string): string {
+  if (signal === '强多' || signal === '偏多') return '#d33';
+  if (signal === '强空' || signal === '偏空') return '#0a8';
+  return '#e6a700';
+}
+
+/** 生成带颜色的 HTML span（Markdown 内嵌，GitHub/VS Code 预览渲染） */
+function colorSpan(text: string, color: string): string {
+  return `<span style="color:${color}">${text}</span>`;
+}
+
+/**
+ * 盘后分析结果的 Markdown 分节（以 `## YYYY-MM-DD` 标题行开头，便于 storage.ts 按日期分节滚动存储）。
+ * 浏览器/VS Code 预览即渲染彩色表格（涨红跌绿），每个标的一行（名称/现价/涨跌幅/信号/建议仓位），简洁明了便于复盘。
+ */
+function buildReportMarkdown(items: ReportItem[], overall: number): string {
   const now = new Date();
+  const date = localDateKey(now);
+  const time = localTimeKey(now);
   const up = items.filter((it) => it.signal === '强多' || it.signal === '偏多').length;
   const down = items.filter((it) => it.signal === '强空' || it.signal === '偏空').length;
-  return {
-    date: localDateKey(now),
-    time: localTimeKey(now),
-    overall_position: Math.round(overall * 10000) / 10000,
-    summary: { up, down, flat: items.length - up - down },
-    items: items.map((it) => {
-      const ma: Record<string, number | null> = {};
-      for (const [k, v] of Object.entries(it.ind.ma)) ma[k] = v;
-      return {
-        name: it.name,
-        code: it.code,
-        type: it.type,
-        price: it.price,
-        change_pct: it.change_pct,
-        ma,
-        body: it.ind.body,
-        upper_shadow: it.ind.upper_shadow,
-        lower_shadow: it.ind.lower_shadow,
-        volume_ratio: it.ind.volume_ratio,
-        score: Math.round(it.score * 10000) / 10000,
-        signal: it.signal,
-        position: it.position,
-      };
-    }),
-  };
+  const flat = items.length - up - down;
+
+  const title = `## ${date} ${time} · 综合仓位 **${(overall * 100).toFixed(0)}%** · 多 ${up} · 空 ${down} · 平 ${flat}`;
+
+  const rows = [
+    '| 标的 | 现价 | 涨跌幅 | 信号 | 建议仓位 |',
+    '|------|------|--------|------|----------|',
+    ...items.map((it) =>
+      `| ${it.name} | ${it.price || '--'} | ${colorSpan(signedPct(it.change_pct), pctColor(it.change_pct))} | ${colorSpan(it.signal, signalColor(it.signal))} | ${(it.position * 100).toFixed(0)}% |`
+    ),
+  ];
+
+  return `${title}\n\n${rows.join('\n')}\n`;
 }
 
 /** 立即执行一次盘后分析（均线/形态 + 仓位建议）并推送，返回标的数量 */
@@ -169,10 +190,10 @@ export async function runReportNow(config: AppConfig): Promise<number> {
   await getPusher(config.stock_push).pushReport(report);
 
   try {
-    const path = saveReport(localDateKey(new Date()), buildReportStorage(reportItems, overall));
-    console.log(`[股票] 盘后分析已存入 ${path}`);
+    const path = saveReport(localDateKey(new Date()), buildReportMarkdown(reportItems, overall));
+    logInfo('stock', `盘后分析已存入 ${path}`);
   } catch (err) {
-    console.error(`[股票] 盘后分析存储失败: ${(err as Error).message}`);
+    logError('stock', `盘后分析存储失败: ${(err as Error).message}`);
   }
   return reportItems.length;
 }
@@ -218,14 +239,14 @@ function checkReports(config: AppConfig): void {
       const label = isClose ? '收盘报告' : '盘中报告';
       runReportNow(config)
         .then((count) => {
-          console.log(`[股票] ${label} 推送成功 ${count} 个标的`);
+          logSuccess('stock', `${label} 推送成功 ${count} 个标的`);
           if (isClose && daily.auto_exit) {
             // 整合后语义：收盘后停止当日股票调度，不退出整个服务
-            console.log('[股票] 收盘报告已推送，今日股票调度停止（服务继续运行）');
+            logInfo('stock', '收盘报告已推送，今日股票调度停止（服务继续运行）');
             stopStockScheduler();
           }
         })
-        .catch((err) => console.error(`[股票] ${label}失败: ${(err as Error).message}`));
+        .catch((err) => logError('stock', `${label}失败: ${(err as Error).message}`));
     }
   }
 }
@@ -239,22 +260,23 @@ export function startStockScheduler(config: AppConfig): void {
   const settings = config.stock_push;
   const items = config.stocks;
   if (items.length === 0) {
-    console.log('[股票] 未配置股票标的，调度器待命');
+    logInfo('stock', '未配置股票标的，调度器待命');
     return;
   }
 
-  console.log(
-    `[股票] 调度器启动：${items.length} 个标的，每 ${settings.interval_seconds} 秒推送一次 → ${settings.channel}`
+  logInfo(
+    'stock',
+    `调度器启动：${items.length} 个标的，每 ${settings.interval_seconds} 秒推送一次 → ${settings.channel}`
   );
 
   // 立即推送一次（不阻塞启动）
   runQuotesNow(config)
-    .then((n) => console.log(`[股票] 首次行情推送成功 ${n} 个标的`))
-    .catch((err) => console.error(`[股票] 首次行情推送失败: ${(err as Error).message}`));
+    .then((n) => logSuccess('stock', `首次行情推送成功 ${n} 个标的`))
+    .catch((err) => logError('stock', `首次行情推送失败: ${(err as Error).message}`));
 
   // 间隔推送
   quoteTimer = setInterval(() => {
-    runQuotesNow(config).catch((err) => console.error(`[股票] 行情推送失败: ${(err as Error).message}`));
+    runQuotesNow(config).catch((err) => logError('stock', `行情推送失败: ${(err as Error).message}`));
   }, settings.interval_seconds * 1000);
 
   // 报告到点检查（每秒一次，保证整点触发）

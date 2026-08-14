@@ -1,6 +1,7 @@
 import axios from 'axios';
-import { Article, addPushLog } from '../db/db';
+import { Article } from '../db/db';
 import { WebhookConfig } from '../config';
+import { logInfo, logSuccess, logWarn, logError } from '../log';
 
 /**
  * 构建消息 payload
@@ -60,7 +61,7 @@ function formatDate(dateStr: string | null | undefined): string {
 }
 
 /** 移除 HTML 标签，保留纯文本，简单排版 */
-function stripHtml(html: string): string {
+export function stripHtml(html: string): string {
   return html
     .replace(/<br\s*\/?>/gi, '\n')
     .replace(/<\/p>/gi, '\n')
@@ -88,25 +89,19 @@ export async function pushToWebhook(
   feedTitle: string
 ): Promise<{ success: boolean; response: string }> {
   const payload = buildPayload(article, feedTitle, webhook.template);
-  const ts = new Date().toLocaleString();
-
-  console.log(`[${ts}] [推送] 开始推送 -> ${webhook.name} (${webhook.template})`);
-  console.log(`[${ts}] [推送] 文章: "${article.title.slice(0, 60)}..."`);
-  console.log(`[${ts}] [推送] 正文长度: ${(article.content || '').length} 字符`);
-  console.log(`[${ts}] [推送] URL: ${webhook.url.slice(0, 60)}...`);
 
   try {
     const resp = await axios.post(webhook.url, payload, {
       timeout: 10_000,
       headers: { 'Content-Type': 'application/json' },
     });
-    console.log(`[${ts}] [推送] ✅ 成功 -> ${webhook.name} (HTTP ${resp.status})`);
+    logSuccess('news', `推送成功 -> ${webhook.name} (HTTP ${resp.status})`);
     return { success: true, response: `HTTP ${resp.status}` };
   } catch (err: any) {
     const msg = err.response
       ? `HTTP ${err.response.status}`
       : err.message;
-    console.log(`[${ts}] [推送] ❌ 失败 -> ${webhook.name} (${msg})`);
+    logError('news', `推送失败 -> ${webhook.name} (${msg})`);
     return { success: false, response: msg };
   }
 }
@@ -119,24 +114,23 @@ export async function pushToAllWebhooks(
   feedTitle: string,
   webhooks: WebhookConfig[]
 ): Promise<{ webhookUrl: string; success: boolean }[]> {
-  const ts = new Date().toLocaleString();
-
   if (webhooks.length === 0) {
-    console.log(`[${ts}] [推送] ⚠️ 没有配置 Webhook，跳过推送`);
+    logWarn('news', '没有配置 Webhook，跳过推送');
     return [];
   }
-
-  console.log(`[${ts}] [推送] 开始向 ${webhooks.length} 个 Webhook 推送文章: "${article.title.slice(0, 60)}..."`);
 
   const results: { webhookUrl: string; success: boolean }[] = [];
 
   for (const wh of webhooks) {
-    const { success, response } = await pushToWebhook(wh, article, feedTitle);
-    addPushLog(article.id, success ? 'success' : 'fail', response);
+    const { success } = await pushToWebhook(wh, article, feedTitle);
     results.push({ webhookUrl: wh.url, success });
   }
 
   const successCount = results.filter((r) => r.success).length;
-  console.log(`[${ts}] [推送] 汇总: ${successCount}/${webhooks.length} 个 Webhook 推送成功`);
+  if (successCount === webhooks.length) {
+    logSuccess('news', `汇总: ${successCount}/${webhooks.length} 个 Webhook 推送成功`);
+  } else {
+    logWarn('news', `汇总: ${successCount}/${webhooks.length} 个 Webhook 推送成功`);
+  }
   return results;
 }
