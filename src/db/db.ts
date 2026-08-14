@@ -49,6 +49,30 @@ export interface PushLog {
   created_at: string;
 }
 
+export interface StockItem {
+  id: number;
+  code: string;
+  market: 'sh' | 'sz';
+  type: 'stock' | 'index';
+  alias: string | null;
+  enabled: number; // 0 | 1
+  sort_order: number;
+  created_at: string;
+}
+
+export interface StockSettings {
+  id: number;
+  interval_seconds: number;
+  channel: 'console' | 'lark';
+  webhook_url: string;
+  report_enabled: number; // 0 | 1
+  report_time: string; // HH:MM
+  close_time: string | null;
+  auto_exit: number; // 0 | 1（整合后语义：收盘后停止当日股票调度）
+  ma_periods: string; // JSON: [5,10,20,60]
+  updated_at: string | null;
+}
+
 // ===== 数据库初始化 =====
 
 let db: Database.Database;
@@ -115,7 +139,34 @@ export function initDb(): Database.Database {
       FOREIGN KEY (article_id) REFERENCES articles(id) ON DELETE CASCADE,
       FOREIGN KEY (webhook_id) REFERENCES webhooks(id) ON DELETE CASCADE
     );
+
+    CREATE TABLE IF NOT EXISTS stock_items (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      code       TEXT    NOT NULL,
+      market     TEXT    NOT NULL CHECK(market IN ('sh','sz')),
+      type       TEXT    NOT NULL DEFAULT 'stock' CHECK(type IN ('stock','index')),
+      alias      TEXT,
+      enabled    INTEGER NOT NULL DEFAULT 1,
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT    NOT NULL DEFAULT (datetime('now', 'localtime'))
+    );
+
+    CREATE TABLE IF NOT EXISTS stock_settings (
+      id               INTEGER PRIMARY KEY CHECK (id = 1),
+      interval_seconds INTEGER NOT NULL DEFAULT 120,
+      channel          TEXT    NOT NULL DEFAULT 'console' CHECK(channel IN ('console','lark')),
+      webhook_url      TEXT,
+      report_enabled   INTEGER NOT NULL DEFAULT 0,
+      report_time      TEXT    NOT NULL DEFAULT '14:45',
+      close_time       TEXT,
+      auto_exit        INTEGER NOT NULL DEFAULT 1,
+      ma_periods       TEXT    NOT NULL DEFAULT '[5,10,20,60]',
+      updated_at       TEXT
+    );
   `);
+
+  // 确保 stock_settings 单例存在
+  db.prepare('INSERT OR IGNORE INTO stock_settings (id) VALUES (1)').run();
 
   // 迁移：如果旧表 webhooks 的 CHECK 约束缺少 'feishu'，则重建表
   try {
@@ -331,4 +382,79 @@ export function getPushLogs(limit: number = 50): (PushLog & { article_title: str
     ORDER BY pl.created_at DESC
     LIMIT ?
   `).all(limit) as any;
+}
+
+// ===== 股票监控配置 =====
+
+export function getStockItems(): StockItem[] {
+  return getDb().prepare('SELECT * FROM stock_items ORDER BY sort_order, id').all() as StockItem[];
+}
+
+export function getEnabledStockItems(): StockItem[] {
+  return getDb().prepare('SELECT * FROM stock_items WHERE enabled = 1 ORDER BY sort_order, id').all() as StockItem[];
+}
+
+export function addStockItem(
+  code: string,
+  market: 'sh' | 'sz',
+  type: 'stock' | 'index' = 'stock',
+  alias?: string | null
+): StockItem {
+  const next = getDb().prepare('SELECT COALESCE(MAX(sort_order), 0) + 1 AS next FROM stock_items').get() as { next: number };
+  const stmt = getDb().prepare(
+    'INSERT INTO stock_items (code, market, type, alias, sort_order) VALUES (?, ?, ?, ?, ?)'
+  );
+  const result = stmt.run(code, market, type, alias || null, next.next);
+  return getDb().prepare('SELECT * FROM stock_items WHERE id = ?').get(result.lastInsertRowid) as StockItem;
+}
+
+export function updateStockItem(
+  id: number,
+  fields: Partial<Pick<StockItem, 'code' | 'market' | 'type' | 'alias' | 'enabled' | 'sort_order'>>
+): void {
+  const sets: string[] = [];
+  const values: any[] = [];
+  for (const [key, value] of Object.entries(fields)) {
+    sets.push(`${key} = ?`);
+    values.push(value);
+  }
+  if (sets.length === 0) return;
+  values.push(id);
+  getDb().prepare(`UPDATE stock_items SET ${sets.join(', ')} WHERE id = ?`).run(...values);
+}
+
+export function deleteStockItem(id: number): void {
+  getDb().prepare('DELETE FROM stock_items WHERE id = ?').run(id);
+}
+
+export function getStockSettings(): StockSettings {
+  return getDb().prepare('SELECT * FROM stock_settings WHERE id = 1').get() as StockSettings;
+}
+
+export function updateStockSettings(
+  fields: Partial<Pick<StockSettings, 'interval_seconds' | 'channel' | 'webhook_url' | 'report_enabled' | 'report_time' | 'close_time' | 'auto_exit' | 'ma_periods'>>
+): void {
+  const sets: string[] = [];
+  const values: any[] = [];
+  for (const [key, value] of Object.entries(fields)) {
+    sets.push(`${key} = ?`);
+    values.push(value);
+  }
+  if (sets.length === 0) return;
+  sets.push("updated_at = datetime('now', 'localtime')");
+  values.push(1);
+  getDb().prepare(`UPDATE stock_settings SET ${sets.join(', ')} WHERE id = ?`).run(...values);
+}
+
+/** 清空并重建股票列表（用于 config.json 导入） */
+export function replaceStockItems(items: Omit<StockItem, 'id' | 'enabled' | 'sort_order' | 'created_at'>[]): void {
+  const db = getDb();
+  db.prepare('DELETE FROM stock_items').run();
+  const stmt = db.prepare(
+    'INSERT INTO stock_items (code, market, type, alias, sort_order) VALUES (?, ?, ?, ?, ?)'
+  );
+  const tx = db.transaction((rows: Omit<StockItem, 'id' | 'enabled' | 'sort_order' | 'created_at'>[]) => {
+    rows.forEach((row, i) => stmt.run(row.code, row.market, row.type, row.alias || null, i));
+  });
+  tx(items);
 }

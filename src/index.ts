@@ -6,8 +6,10 @@ import { startScheduler } from './scheduler';
 import subscriptionRoutes from './routes/subscriptions';
 import webhookRoutes from './routes/webhooks';
 import logRoutes from './routes/logs';
+import stockRoutes from './routes/stock';
 import { triggerPoll } from './scheduler';
 import { getAllSubscriptions, getAllWebhooks, getPushLogs } from './db/db';
+import { startStockScheduler } from './stock/scheduler';
 
 const app = express();
 
@@ -18,6 +20,7 @@ app.use(express.json());
 app.use('/api/subscriptions', subscriptionRoutes);
 app.use('/api/webhooks', webhookRoutes);
 app.use('/api/logs', logRoutes);
+app.use('/api/stock', stockRoutes);
 
 // POST /api/test-push — 手动测试推送
 app.post('/api/test-push', async (_req, res) => {
@@ -92,6 +95,9 @@ function main() {
 
     // 启动定时轮询（每个订阅源按自己的 interval 独立调度）
     startScheduler();
+
+    // 启动股票监控调度（行情间隔推送 + 盘中/收盘报告）
+    startStockScheduler();
   });
 }
 

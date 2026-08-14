@@ -1,7 +1,8 @@
 node_modules/
 dist/
 .env
-data/          # SQLite 数据库文件
+# SQLite 数据库文件
+data/
 *.db
 *.db-shm
 *.db-wal

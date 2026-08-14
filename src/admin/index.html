@@ -13,6 +13,7 @@
       <button class="tab active" data-tab="subscriptions">订阅管理</button>
       <button class="tab" data-tab="webhooks">Webhook 配置</button>
       <button class="tab" data-tab="logs">推送日志</button>
+      <button class="tab" data-tab="stock">📈 股票监控</button>
     </nav>
   </header>
 
@@ -75,6 +76,69 @@
         <tbody id="log-tbody"></tbody>
       </table>
     </section>
+
+    <!-- 股票监控 -->
+    <section id="tab-stock" class="tab-content">
+      <div class="toolbar">
+        <button id="btn-add-stock" class="btn btn-primary">➕ 添加标的</button>
+        <button id="btn-import-stock-config" class="btn btn-secondary">📥 导入 config.json</button>
+        <button id="btn-stock-push" class="btn btn-secondary">🚀 立即推送行情</button>
+        <button id="btn-stock-report" class="btn btn-secondary">📋 立即盘后分析</button>
+      </div>
+
+      <h3>⚙️ 推送设置</h3>
+      <form id="stock-settings-form" class="settings-form">
+        <div class="settings-grid">
+          <label>推送间隔（秒）
+            <input type="number" id="stock-interval" min="1" step="1" required>
+          </label>
+          <label>推送通道
+            <select id="stock-channel">
+              <option value="console">控制台</option>
+              <option value="lark">飞书机器人</option>
+            </select>
+          </label>
+          <label id="stock-webhook-label">飞书 Webhook 地址
+            <input type="url" id="stock-webhook-url" placeholder="https://open.feishu.cn/open-apis/bot/v2/hook/xxx">
+          </label>
+          <label>启用盘后分析
+            <input type="checkbox" id="stock-report-enabled">
+          </label>
+          <label>盘中报告时间
+            <input type="time" id="stock-report-time" value="14:45">
+          </label>
+          <label>收盘报告时间（留空不推送）
+            <input type="time" id="stock-close-time">
+          </label>
+          <label>收盘后停止当日调度
+            <input type="checkbox" id="stock-auto-exit" checked>
+          </label>
+          <label>均线周期（逗号分隔）
+            <input type="text" id="stock-ma-periods" value="5,10,20,60">
+          </label>
+        </div>
+        <button type="submit" class="btn btn-primary">保存设置</button>
+      </form>
+
+      <h3>📊 标的列表</h3>
+      <table id="stock-table">
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>名称</th>
+            <th>代码</th>
+            <th>市场</th>
+            <th>类型</th>
+            <th>状态</th>
+            <th>操作</th>
+          </tr>
+        </thead>
+        <tbody id="stock-tbody"></tbody>
+      </table>
+
+      <h3>🗂️ 盘后分析历史（最近 5 个交易日）</h3>
+      <div id="stock-history"></div>
+    </section>
   </main>
 
   <!-- 添加/编辑订阅弹窗 -->
@@ -129,6 +193,50 @@
           </select>
         </label>
         <button type="submit" class="btn btn-primary">保存</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- 添加/编辑股票标的弹窗 -->
+  <div id="stock-modal" class="modal" style="display:none">
+    <div class="modal-content">
+      <span class="modal-close">&times;</span>
+      <h2 id="stock-modal-title">添加标的</h2>
+      <form id="stock-form">
+        <input type="hidden" id="stock-id">
+        <label>名称（alias，可选） <input type="text" id="stock-alias" placeholder="如: 沪深300"></label>
+        <label>代码 <input type="text" id="stock-code" required placeholder="如: 000300"></label>
+        <label>
+          市场
+          <select id="stock-market">
+            <option value="sh">沪市 (sh)</option>
+            <option value="sz">深市 (sz)</option>
+          </select>
+        </label>
+        <label>
+          类型
+          <select id="stock-type">
+            <option value="stock">股票</option>
+            <option value="index">指数</option>
+          </select>
+        </label>
+        <button type="submit" class="btn btn-primary">保存</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- 导入 config.json 弹窗 -->
+  <div id="stock-import-modal" class="modal" style="display:none">
+    <div class="modal-content">
+      <span class="modal-close">&times;</span>
+      <h2>导入 config.json</h2>
+      <p style="font-size: 13px; color: #666;">粘贴原 stock-monitor 的 config.json 内容，将覆盖当前股票配置。</p>
+      <form id="stock-import-form">
+        <label>
+          配置内容
+          <textarea id="stock-import-json" rows="12" placeholder='{"stocks": [...], "interval_seconds": 120, ...}'></textarea>
+        </label>
+        <button type="submit" class="btn btn-primary">导入</button>
       </form>
     </div>
   </div>
