@@ -1,104 +1,113 @@
-import express from 'express';
 import path from 'path';
-import { config } from './config';
+import { loadConfig } from './config';
 import { initDb } from './db/db';
-import { startScheduler } from './scheduler';
-import subscriptionRoutes from './routes/subscriptions';
-import webhookRoutes from './routes/webhooks';
-import logRoutes from './routes/logs';
-import stockRoutes from './routes/stock';
-import { triggerPoll } from './scheduler';
-import { getAllSubscriptions, getAllWebhooks, getPushLogs } from './db/db';
-import { startStockScheduler } from './stock/scheduler';
+import { startScheduler, triggerPoll } from './scheduler';
+import { startStockScheduler, runQuotesNow, runReportNow } from './stock/scheduler';
 
-const app = express();
+// ===== CLI 参数解析 =====
 
-// ===== 中间件 =====
-app.use(express.json());
+interface CliArgs {
+  configPath: string;
+  once: boolean; // 跑一轮 RSS 轮询 + 一次行情推送后退出
+  poll: boolean; // 仅触发一次 RSS 轮询后退出
+  report: boolean; // 立即执行一次盘后分析后退出
+}
 
-// ===== API 路由 =====
-app.use('/api/subscriptions', subscriptionRoutes);
-app.use('/api/webhooks', webhookRoutes);
-app.use('/api/logs', logRoutes);
-app.use('/api/stock', stockRoutes);
+function parseArgs(argv: string[]): CliArgs {
+  const args: CliArgs = {
+    configPath: path.resolve(__dirname, '../config.json'),
+    once: false,
+    poll: false,
+    report: false,
+  };
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i];
+    if (arg === '-c' || arg === '--config') {
+      args.configPath = path.resolve(argv[++i] || '');
+    } else if (arg === '--once') {
+      args.once = true;
+    } else if (arg === '--poll') {
+      args.poll = true;
+    } else if (arg === '--report') {
+      args.report = true;
+    } else if (arg === '--help' || arg === '-h') {
+      console.log(`用法: node dist/index.js [选项]
 
-// POST /api/test-push — 手动测试推送
-app.post('/api/test-push', async (_req, res) => {
-  // 找到第一条未推送的文章，如果没有则用最新文章
-  const { getUnpushedArticles } = await import('./db/db');
-  const subs = getAllSubscriptions();
-  let article;
+选项:
+  -c, --config <路径>  指定配置文件（默认: 项目根目录 config.json）
+  --once               跑一轮 RSS 轮询 + 一次行情推送后退出（验证用）
+  --poll               仅触发一次 RSS 轮询后退出（配合计划任务）
+  --report             立即执行一次盘后分析后退出
+  -h, --help           显示帮助
 
-  for (const sub of subs) {
-    const articles = getUnpushedArticles(sub.id);
-    if (articles.length > 0) {
-      article = articles[0];
-      break;
+不带参数时：常驻运行（RSS 轮询 + 股票行情推送 + 盘中/收盘报告）。`);
+      process.exit(0);
     }
   }
+  return args;
+}
 
-  if (!article) {
-    res.status(400).json({ success: false, message: '没有可推送的文章，请先添加 RSS 订阅' });
-    return;
+// ===== 一次性模式 =====
+
+async function runOnceMode(args: CliArgs): Promise<number> {
+  const config = loadConfig(args.configPath);
+  await triggerPoll(config);
+  if (config.stocks.length > 0) {
+    await runQuotesNow(config);
   }
+  return 0;
+}
 
-  const { pushToAllWebhooks } = await import('./webhook/sender');
-  const { markArticlePushed } = await import('./db/db');
-  const results = await pushToAllWebhooks(article, '测试推送');
-  markArticlePushed(article.id);
+async function runPollMode(args: CliArgs): Promise<number> {
+  const config = loadConfig(args.configPath);
+  await triggerPoll(config);
+  return 0;
+}
 
-  res.json({ success: true, data: results });
-});
+async function runReportMode(args: CliArgs): Promise<number> {
+  const config = loadConfig(args.configPath);
+  await runReportNow(config);
+  return 0;
+}
 
-// POST /api/trigger-poll — 手动触发一次轮询
-app.post('/api/trigger-poll', async (_req, res) => {
-  try {
-    await triggerPoll();
-    res.json({ success: true, message: '轮询已触发' });
-  } catch (err) {
-    res.status(500).json({ success: false, message: (err as Error).message });
-  }
-});
+// ===== 常驻模式 =====
 
-// GET /api/stats — 概览统计
-app.get('/api/stats', (_req, res) => {
-  const subs = getAllSubscriptions();
-  const hooks = getAllWebhooks();
-  const logs = getPushLogs(10);
-  res.json({
-    success: true,
-    data: {
-      subscriptionCount: subs.length,
-      webhookCount: hooks.length,
-      recentLogs: logs,
-    },
-  });
-});
+function runDaemon(args: CliArgs): void {
+  const config = loadConfig(args.configPath);
+  console.log(`[配置] 已加载 ${config.subscriptions.length} 个订阅源、${config.webhooks.length} 个 Webhook、${config.stocks.length} 个股票标的`);
 
-// ===== 管理面板静态文件 =====
-app.use(express.static(config.adminDir));
-
-// SPA 兜底，未匹配的路由返回 index.html
-app.get('*', (_req, res) => {
-  res.sendFile(path.join(config.adminDir, 'index.html'));
-});
-
-// ===== 启动 =====
-function main() {
-  // 初始化数据库
+  // 初始化数据库（去重缓存 / 推送历史）
   initDb();
   console.log('[数据库] 初始化完成');
 
-  // 启动 HTTP 服务
-  app.listen(config.port, () => {
-    console.log(`[服务] RSS Station 已启动: http://localhost:${config.port}`);
+  // 启动 RSS 轮询调度
+  startScheduler(config);
 
-    // 启动定时轮询（每个订阅源按自己的 interval 独立调度）
-    startScheduler();
+  // 启动股票监控调度
+  startStockScheduler(config);
 
-    // 启动股票监控调度（行情间隔推送 + 盘中/收盘报告）
-    startStockScheduler();
-  });
+  console.log('[服务] RSS Station 常驻运行中（Ctrl+C 退出）');
 }
 
-main();
+// ===== 启动 =====
+
+async function main() {
+  const args = parseArgs(process.argv.slice(2));
+
+  try {
+    if (args.once) return await runOnceMode(args);
+    if (args.poll) return await runPollMode(args);
+    if (args.report) return await runReportMode(args);
+    runDaemon(args);
+    return 0;
+  } catch (err) {
+    console.error(`[错误] ${(err as Error).message}`);
+    return 1;
+  }
+}
+
+main().then((code) => {
+  if (process.argv.includes('--once') || process.argv.includes('--poll') || process.argv.includes('--report')) {
+    process.exit(code);
+  }
+});

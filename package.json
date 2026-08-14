@@ -1,27 +1,27 @@
 {
   "name": "rss-station",
   "version": "0.1.0",
-  "description": "RSS 订阅监控 & Webhook 推送服务",
+  "description": "RSS 订阅监控 & 股票行情监控 & Webhook 推送（JSON 配置 + CLI）",
   "private": true,
   "scripts": {
     "dev": "tsx watch src/index.ts",
-    "build": "tsc && cp -r src/admin dist/admin",
+    "build": "tsc",
     "start": "node dist/index.js",
-    "start:prod": "npm run build && npm start"
+    "start:prod": "npm run build && npm start",
+    "monitor": "node dist/index.js",
+    "poll": "node dist/index.js --poll",
+    "once": "node dist/index.js --once",
+    "report": "node dist/index.js --report"
   },
   "dependencies": {
     "axios": "^1.7.0",
     "better-sqlite3": "^11.0.0",
     "cheerio": "^1.2.0",
-    "express": "^4.19.0",
-    "node-cron": "^3.0.3",
     "rss-parser": "^3.13.0"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.10",
-    "@types/express": "^4.17.21",
     "@types/node": "^20.12.0",
-    "@types/node-cron": "^3.0.11",
     "tsx": "^4.7.0",
     "typescript": "^5.4.0"
   }

@@ -1,9 +1,9 @@
 import fs from 'fs';
 import path from 'path';
-import { config } from '../config';
+import { dbPath } from '../config';
 
 // 仓位历史文件：data/position_history.json，按日期键组织，滚动保留最近 N 个交易日
-const DATA_DIR = path.resolve(config.dbPath, '..');
+const DATA_DIR = path.resolve(dbPath, '..');
 const DEFAULT_FILE = path.join(DATA_DIR, 'position_history.json');
 const RECENT_DAYS = 5;
 

@@ -1,0 +1,32 @@
+{
+  "subscriptions": [
+    {
+      "name": "示例订阅",
+      "url": "https://example.com/feed.xml",
+      "type": "rss",
+      "interval_minutes": 30
+    }
+  ],
+  "webhooks": [
+    {
+      "name": "飞书",
+      "url": "https://open.feishu.cn/open-apis/bot/v2/hook/替换为你的_webhook",
+      "template": "feishu"
+    }
+  ],
+  "stocks": [
+    { "code": "000300", "market": "sh", "type": "index", "alias": "沪深300" }
+  ],
+  "stock_push": {
+    "interval_seconds": 120,
+    "channel": "console",
+    "webhook_url": ""
+  },
+  "daily_report": {
+    "enabled": false,
+    "time": "14:45",
+    "close_time": "15:00",
+    "auto_exit": true,
+    "ma_periods": [5, 10, 20, 60]
+  }
+}

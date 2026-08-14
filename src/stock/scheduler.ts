@@ -1,9 +1,5 @@
 import axios from 'axios';
-import {
-  getEnabledStockItems,
-  getStockSettings,
-  StockItem as DbStockItem,
-} from '../db/db';
+import { AppConfig, StockItemConfig, StockPushConfig, DailyReportConfig } from '../config';
 import { fetchQuotes, StockItem } from './quote';
 import { fetchDailyKlines, computeIndicators } from './kline';
 import { scoreStock, overallPosition } from './strategy';
@@ -21,7 +17,7 @@ import { saveReport } from './storage';
 export class PusherError extends Error {}
 
 interface Pusher {
-  push(quotes: ReturnType<typeof fetchQuotes> extends Promise<infer T> ? T : never): Promise<void>;
+  push(quotes: any): Promise<void>;
   pushReport(report: { console: string; lark: unknown }): Promise<void>;
 }
 
@@ -59,15 +55,14 @@ class LarkPusher implements Pusher {
   }
 }
 
-function getPusher(): Pusher {
-  const settings = getStockSettings();
-  if (settings.channel === 'lark') return new LarkPusher(settings.webhook_url);
+function getPusher(push: StockPushConfig): Pusher {
+  if (push.channel === 'lark') return new LarkPusher(push.webhook_url);
   return new ConsolePusher();
 }
 
 // ===== 配置项转换 =====
 
-function toQuoteItems(items: DbStockItem[]): StockItem[] {
+function toQuoteItems(items: StockItemConfig[]): StockItem[] {
   return items.map((i) => ({
     code: i.code,
     market: i.market,
@@ -79,11 +74,11 @@ function toQuoteItems(items: DbStockItem[]): StockItem[] {
 // ===== 手动触发（对应 --once / --report） =====
 
 /** 立即拉取并推送一次行情，返回标的数量 */
-export async function runQuotesNow(): Promise<number> {
-  const items = getEnabledStockItems();
-  if (items.length === 0) throw new Error('暂无启用的股票标的');
+export async function runQuotesNow(config: AppConfig): Promise<number> {
+  const items = config.stocks;
+  if (items.length === 0) throw new Error('暂无配置股票标的');
   const quotes = await fetchQuotes(toQuoteItems(items));
-  await getPusher().push(quotes);
+  await getPusher(config.stock_push).push(quotes);
   return quotes.length;
 }
 
@@ -130,16 +125,10 @@ function buildReportStorage(items: ReportItem[], overall: number): Record<string
 }
 
 /** 立即执行一次盘后分析（均线/形态 + 仓位建议）并推送，返回标的数量 */
-export async function runReportNow(): Promise<number> {
-  const items = getEnabledStockItems();
-  if (items.length === 0) throw new Error('暂无启用的股票标的');
-  const settings = getStockSettings();
-  let maPeriods: number[];
-  try {
-    maPeriods = JSON.parse(settings.ma_periods || '[5,10,20,60]') as number[];
-  } catch {
-    maPeriods = [5, 10, 20, 60];
-  }
+export async function runReportNow(config: AppConfig): Promise<number> {
+  const items = config.stocks;
+  if (items.length === 0) throw new Error('暂无配置股票标的');
+  const maPeriods = config.daily_report.ma_periods;
 
   const quoteItems = toQuoteItems(items);
   const quotes = await fetchQuotes(quoteItems);
@@ -177,7 +166,7 @@ export async function runReportNow(): Promise<number> {
     console: formatReportConsole(reportItems, overall),
     lark: formatReportLarkCard(reportItems, overall),
   };
-  await getPusher().pushReport(report);
+  await getPusher(config.stock_push).pushReport(report);
 
   try {
     const path = saveReport(localDateKey(new Date()), buildReportStorage(reportItems, overall));
@@ -205,9 +194,9 @@ function parseHHMM(text: string): [number, number] {
 }
 
 /** 到点推送：盘中/收盘报告各一次（交易日） */
-function checkReports(): void {
-  const settings = getStockSettings();
-  if (!settings.report_enabled) return;
+function checkReports(config: AppConfig): void {
+  const daily: DailyReportConfig = config.daily_report;
+  if (!daily.enabled) return;
   const now = new Date();
   if (!isTradeDay(now)) return;
 
@@ -218,8 +207,8 @@ function checkReports(): void {
   }
 
   const schedule: Array<[string, boolean]> = [];
-  if (settings.report_time) schedule.push([settings.report_time, false]);
-  if (settings.close_time) schedule.push([settings.close_time, true]);
+  if (daily.time) schedule.push([daily.time, false]);
+  if (daily.close_time) schedule.push([daily.close_time, true]);
 
   for (const [t, isClose] of schedule) {
     if (reported.has(t)) continue;
@@ -227,10 +216,10 @@ function checkReports(): void {
     if (now.getHours() > h || (now.getHours() === h && now.getMinutes() >= m)) {
       reported.add(t);
       const label = isClose ? '收盘报告' : '盘中报告';
-      runReportNow()
+      runReportNow(config)
         .then((count) => {
           console.log(`[股票] ${label} 推送成功 ${count} 个标的`);
-          if (isClose && settings.auto_exit) {
+          if (isClose && daily.auto_exit) {
             // 整合后语义：收盘后停止当日股票调度，不退出整个服务
             console.log('[股票] 收盘报告已推送，今日股票调度停止（服务继续运行）');
             stopStockScheduler();
@@ -242,15 +231,15 @@ function checkReports(): void {
 }
 
 /** 启动股票调度器（行情间隔推送 + 报告到点触发） */
-export function startStockScheduler(): void {
+export function startStockScheduler(config: AppConfig): void {
   stopStockScheduler();
   todayKey = '';
   reported.clear();
 
-  const settings = getStockSettings();
-  const items = getEnabledStockItems();
+  const settings = config.stock_push;
+  const items = config.stocks;
   if (items.length === 0) {
-    console.log('[股票] 暂无启用的股票标的，调度器待命');
+    console.log('[股票] 未配置股票标的，调度器待命');
     return;
   }
 
@@ -259,17 +248,17 @@ export function startStockScheduler(): void {
   );
 
   // 立即推送一次（不阻塞启动）
-  runQuotesNow()
+  runQuotesNow(config)
     .then((n) => console.log(`[股票] 首次行情推送成功 ${n} 个标的`))
     .catch((err) => console.error(`[股票] 首次行情推送失败: ${(err as Error).message}`));
 
   // 间隔推送
   quoteTimer = setInterval(() => {
-    runQuotesNow().catch((err) => console.error(`[股票] 行情推送失败: ${(err as Error).message}`));
+    runQuotesNow(config).catch((err) => console.error(`[股票] 行情推送失败: ${(err as Error).message}`));
   }, settings.interval_seconds * 1000);
 
   // 报告到点检查（每秒一次，保证整点触发）
-  tickTimer = setInterval(checkReports, 1000);
+  tickTimer = setInterval(() => checkReports(config), 1000);
 }
 
 /** 停止股票调度器 */
@@ -282,10 +271,4 @@ export function stopStockScheduler(): void {
     clearInterval(tickTimer);
     tickTimer = null;
   }
-}
-
-/** 刷新股票调度器（增删改配置后调用） */
-export function refreshStockScheduler(): void {
-  console.log(`[股票] 刷新调度器...`);
-  startStockScheduler();
 }

@@ -1,27 +1,24 @@
-import { config } from './config';
+import { AppConfig, SubscriptionConfig, WebhookConfig } from './config';
 import {
-  getEnabledSubscriptions,
-  getSubscriptionById,
   getLastGuids,
   updateLastFetched,
   updateLastGuids,
   insertArticle,
   markArticlePushed,
-  Subscription,
 } from './db/db';
 import { fetchFeed } from './rss/fetcher';
 import { scrapePage, fetchArticleContent, ScrapeRule } from './scraper/scraper';
 import { detectNewArticles } from './rss/detector';
 import { pushToAllWebhooks } from './webhook/sender';
 
-/** 每个订阅源的定时器 map */
-const timers = new Map<number, ReturnType<typeof setInterval>>();
+/** 每个订阅源的定时器 map（key: 订阅 URL） */
+const timers = new Map<string, ReturnType<typeof setInterval>>();
 
 /**
  * 轮询单个订阅源
  */
-async function pollSubscription(sub: Subscription): Promise<void> {
-  const { id: subId, url, name, type, scrape_rules } = sub;
+async function pollSubscription(sub: SubscriptionConfig, webhooks: WebhookConfig[]): Promise<void> {
+  const { url, name, type, scrape_rules } = sub;
   console.log(`[${new Date().toLocaleString()}] 正在抓取: ${name} (${url}) [${type}]`);
 
   let feedTitle: string;
@@ -31,7 +28,7 @@ async function pollSubscription(sub: Subscription): Promise<void> {
   try {
     if (type === 'scrape' && scrape_rules) {
       // 网页抓取模式
-      const rule: ScrapeRule = JSON.parse(scrape_rules);
+      const rule: ScrapeRule = scrape_rules;
       contentSelector = rule.contentSelector;
       const result = await scrapePage(url, rule);
       feedTitle = result.title;
@@ -49,10 +46,10 @@ async function pollSubscription(sub: Subscription): Promise<void> {
 
   // 检测新文章，最多取前 5 条推送，防止滥用
   console.log(`[${name}] 列表页抓取到 ${items.length} 条`);
-  const newItems = detectNewArticles(subId, items).slice(0, 5);
+  const newItems = detectNewArticles(url, items).slice(0, 5);
   if (newItems.length === 0) {
-    console.log(`[${name}] 无新文章 (缓存 ${getLastGuids(subId).length} 条)`);
-    updateLastFetched(subId);
+    console.log(`[${name}] 无新文章 (缓存 ${getLastGuids(url).length} 条)`);
+    updateLastFetched(url);
     return;
   }
 
@@ -77,19 +74,18 @@ async function pollSubscription(sub: Subscription): Promise<void> {
   // 入库
   for (const item of newItems) {
     const article = insertArticle({
-      subscription_id: subId,
+      subscription_url: url,
       guid: item.guid,
       title: item.title,
       link: item.link,
       pub_date: null,
-      content_snippet: '',
       content: item.content || null,
     });
 
     // 推送
     if (article) {
       // 标题和内容一样时跳过推送（说明正文抓取失败，内容被标题填充）
-      const content = article.content || article.content_snippet || '';
+      const content = article.content || '';
       if (!content) {
         console.log(`[${name}] 跳过推送: "${article.title}" (正文为空)`);
         markArticlePushed(article.id);
@@ -102,7 +98,7 @@ async function pollSubscription(sub: Subscription): Promise<void> {
       }
 
       try {
-        const results = await pushToAllWebhooks(article, feedTitle);
+        const results = await pushToAllWebhooks(article, feedTitle, webhooks);
         const successCount = results.filter((r) => r.success).length;
         if (successCount > 0) {
           markArticlePushed(article.id);
@@ -118,17 +114,17 @@ async function pollSubscription(sub: Subscription): Promise<void> {
 
   // 更新缓存：只保留本次抓取的最新 5 条 GUID 用于下次比较
   const allGuids = items.map((item) => item.guid);
-  updateLastGuids(subId, allGuids);
-  updateLastFetched(subId);
+  updateLastGuids(url, allGuids);
+  updateLastFetched(url);
 }
 
 /**
  * 轮询所有启用的订阅源（用于手动触发）
  */
-async function pollAll(): Promise<void> {
-  const subs = getEnabledSubscriptions();
+async function pollAll(config: AppConfig): Promise<void> {
+  const subs = config.subscriptions;
   if (subs.length === 0) {
-    console.log(`[${new Date().toLocaleString()}] 暂无启用的订阅源`);
+    console.log(`[${new Date().toLocaleString()}] 暂无订阅源`);
     return;
   }
 
@@ -136,7 +132,7 @@ async function pollAll(): Promise<void> {
 
   // 并行抓取所有订阅源
   await Promise.allSettled(
-    subs.map((sub: Subscription) => pollSubscription(sub))
+    subs.map((sub: SubscriptionConfig) => pollSubscription(sub, config.webhooks))
   );
 
   console.log(`[${new Date().toLocaleString()}] 本轮轮询结束`);
@@ -145,20 +141,20 @@ async function pollAll(): Promise<void> {
 /**
  * 获取订阅源的轮询间隔（毫秒）
  */
-function getIntervalMs(sub: Subscription): number {
-  const minutes = (sub.interval && sub.interval > 0) ? sub.interval : config.defaultInterval;
+function getIntervalMs(sub: SubscriptionConfig): number {
+  const minutes = (sub.interval_minutes && sub.interval_minutes > 0) ? sub.interval_minutes : 30;
   return minutes * 60 * 1000;
 }
 
 /**
- * 启动调度器，为每个启用的订阅源创建独立定时器
+ * 启动调度器，为每个订阅源创建独立定时器
  */
-export function startScheduler(): void {
+export function startScheduler(config: AppConfig): void {
   stopScheduler();
 
-  const subs = getEnabledSubscriptions();
+  const subs = config.subscriptions;
   if (subs.length === 0) {
-    console.log(`[${new Date().toLocaleString()}] 暂无启用的订阅源，调度器待命`);
+    console.log(`[${new Date().toLocaleString()}] 暂无订阅源，调度器待命`);
     return;
   }
 
@@ -170,11 +166,11 @@ export function startScheduler(): void {
     console.log(`  - ${sub.name} (${sub.type}) 每 ${minutes} 分钟轮询一次`);
 
     // 立即执行一次
-    pollSubscription(sub);
+    pollSubscription(sub, config.webhooks);
 
     // 创建定时器
-    const timer = setInterval(() => pollSubscription(sub), intervalMs);
-    timers.set(sub.id, timer);
+    const timer = setInterval(() => pollSubscription(sub, config.webhooks), intervalMs);
+    timers.set(sub.url, timer);
   }
 }
 
@@ -182,23 +178,15 @@ export function startScheduler(): void {
  * 停止所有定时器
  */
 export function stopScheduler(): void {
-  for (const [id, timer] of timers.entries()) {
+  for (const timer of timers.values()) {
     clearInterval(timer);
   }
   timers.clear();
 }
 
 /**
- * 刷新调度器（增删改订阅源后调用）
+ * 手动触发一次轮询（用于 --poll / 一次性验证）
  */
-export function refreshScheduler(): void {
-  console.log(`[${new Date().toLocaleString()}] 刷新调度器...`);
-  startScheduler();
-}
-
-/**
- * 手动触发一次轮询（用于测试接口）
- */
-export async function triggerPoll(): Promise<void> {
-  await pollAll();
+export async function triggerPoll(config: AppConfig): Promise<void> {
+  await pollAll(config);
 }

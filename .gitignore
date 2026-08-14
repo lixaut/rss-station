@@ -1,6 +1,8 @@
 node_modules/
 dist/
 .env
+# 本地配置（含真实 webhook，不入库；提交示例用 config.json.example）
+config.json
 # SQLite 数据库文件
 data/
 *.db
