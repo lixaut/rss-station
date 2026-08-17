@@ -20,3 +20,13 @@
 | 机器人 | 2338.18 | <span style="color:#d33">+0.16%</span> | <span style="color:#e6a700">中性</span> | 50% |
 | 半导体 | 17700.82 | <span style="color:#d33">+0.85%</span> | <span style="color:#d33">偏多</span> | 65% |
 
+## 2026-08-17 15:00 · 综合仓位 **62%** · 多 3 · 空 0 · 平 2
+
+| 标的 | 现价 | 涨跌幅 | 信号 | 建议仓位 |
+|------|------|--------|------|----------|
+| 沪深300 | 4742.16 | <span style="color:#d33">+1.63%</span> | <span style="color:#e6a700">中性</span> | 50% |
+| 有色金属 | 9376.02 | <span style="color:#d33">+2.87%</span> | <span style="color:#d33">偏多</span> | 65% |
+| CS创新药 | 983.42 | <span style="color:#0a8">-0.09%</span> | <span style="color:#d33">强多</span> | 80% |
+| 机器人 | 2398.73 | <span style="color:#d33">+2.59%</span> | <span style="color:#e6a700">中性</span> | 50% |
+| 半导体 | 18583.29 | <span style="color:#d33">+4.99%</span> | <span style="color:#d33">偏多</span> | 65% |
+

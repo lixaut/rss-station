@@ -39,6 +39,10 @@ export interface StockPushConfig {
   interval_seconds: number;
   channel: 'console' | 'lark';
   webhook_url: string;
+  /** 行情推送时间窗口（含边界，HH:MM），默认 09:30 开盘后开始推送 */
+  start_time: string;
+  /** 行情推送时间窗口结束（HH:MM），默认 15:00 收盘后停止 */
+  end_time: string;
 }
 
 export interface DailyReportConfig {
@@ -64,12 +68,20 @@ const STOCK_CHANNELS = ['console', 'lark'];
 const KINDS = ['stock', 'index'];
 const HHMM_RE = /^\d{1,2}:\d{2}$/;
 
+/** "HH:MM" → 当日分钟数，用于时间先后比较 */
+function toMinutes(hhmm: string): number {
+  const [h, m] = hhmm.split(':').map(Number);
+  return h * 60 + m;
+}
+
 const DEFAULT_CONFIG_PATH = path.resolve(__dirname, '../config.json');
 
 const DEFAULT_STOCK_PUSH: StockPushConfig = {
   interval_seconds: 120,
   channel: 'console',
   webhook_url: '',
+  start_time: '09:30',
+  end_time: '15:00',
 };
 
 const DEFAULT_DAILY_REPORT: DailyReportConfig = {
@@ -176,7 +188,26 @@ function parseStockPush(raw: unknown): StockPushConfig {
   if (channel === 'lark' && !webhookUrl.startsWith('https://')) {
     throw new Error('stock_push.channel 为 lark 时必须配置有效的 webhook_url');
   }
-  return { interval_seconds: interval, channel: channel as 'console' | 'lark', webhook_url: webhookUrl };
+  const startTime = String(p.start_time ?? DEFAULT_STOCK_PUSH.start_time).trim();
+  if (!HHMM_RE.test(startTime)) {
+    throw new Error('stock_push.start_time 格式应为 HH:MM，如 09:30');
+  }
+  const endTime = String(p.end_time ?? DEFAULT_STOCK_PUSH.end_time).trim();
+  if (!HHMM_RE.test(endTime)) {
+    throw new Error('stock_push.end_time 格式应为 HH:MM，如 15:00');
+  }
+  const startMin = toMinutes(startTime);
+  const endMin = toMinutes(endTime);
+  if (startMin >= endMin) {
+    throw new Error('stock_push.start_time 必须早于 end_time');
+  }
+  return {
+    interval_seconds: interval,
+    channel: channel as 'console' | 'lark',
+    webhook_url: webhookUrl,
+    start_time: startTime,
+    end_time: endTime,
+  };
 }
 
 function parseDailyReport(raw: unknown): DailyReportConfig {

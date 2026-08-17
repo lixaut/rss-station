@@ -204,6 +204,7 @@ let quoteTimer: ReturnType<typeof setInterval> | null = null;
 let tickTimer: ReturnType<typeof setInterval> | null = null;
 let todayKey = '';
 const reported = new Set<string>(); // 当天已推送的报告时刻
+let windowStarted = false; // 当天是否已进入推送窗口并完成首次推送
 
 function isTradeDay(d: Date): boolean {
   return d.getDay() >= 1 && d.getDay() <= 5; // 简单档：周一~周五，节假日不排除
@@ -212,6 +213,34 @@ function isTradeDay(d: Date): boolean {
 function parseHHMM(text: string): [number, number] {
   const [h, m] = text.split(':').map(Number);
   return [h, m];
+}
+
+/**
+ * 当前时刻是否处于行情推送时间窗口（且为交易日）。
+ * 按 A 股交易时段：上午 [start_time, 11:30) + 下午 [13:00, end_time)，
+ * 午间 11:30–13:00 休市不推送。
+ */
+function inPushWindow(now: Date, settings: StockPushConfig): boolean {
+  if (!isTradeDay(now)) return false;
+  const [sh, sm] = parseHHMM(settings.start_time);
+  const [eh, em] = parseHHMM(settings.end_time);
+  const t = now.getHours() * 60 + now.getMinutes();
+  const start = sh * 60 + sm;
+  const end = eh * 60 + em;
+  const morningEnd = 11 * 60 + 30; // 11:30 午间休市
+  const afternoonStart = 13 * 60; // 13:00 下午开盘
+  return (t >= start && t < Math.min(end, morningEnd)) || (t >= afternoonStart && t < end);
+}
+
+/** 每秒检查：到达推送窗口起点（默认 09:30）时准点推送首次行情 */
+function checkPushWindowStart(config: AppConfig): void {
+  if (windowStarted) return;
+  const now = new Date();
+  if (!inPushWindow(now, config.stock_push)) return;
+  windowStarted = true;
+  runQuotesNow(config)
+    .then((n) => logSuccess('stock', `进入推送时间窗（${config.stock_push.start_time}），首次行情推送成功 ${n} 个标的`))
+    .catch((err) => logError('stock', `窗口起点行情推送失败: ${(err as Error).message}`));
 }
 
 /** 到点推送：盘中/收盘报告各一次（交易日） */
@@ -225,6 +254,7 @@ function checkReports(config: AppConfig): void {
   if (today !== todayKey) {
     todayKey = today;
     reported.clear();
+    windowStarted = false;
   }
 
   const schedule: Array<[string, boolean]> = [];
@@ -256,6 +286,7 @@ export function startStockScheduler(config: AppConfig): void {
   stopStockScheduler();
   todayKey = '';
   reported.clear();
+  windowStarted = false;
 
   const settings = config.stock_push;
   const items = config.stocks;
@@ -266,21 +297,30 @@ export function startStockScheduler(config: AppConfig): void {
 
   logInfo(
     'stock',
-    `调度器启动：${items.length} 个标的，每 ${settings.interval_seconds} 秒推送一次 → ${settings.channel}`
+    `调度器启动：${items.length} 个标的，每 ${settings.interval_seconds} 秒推送一次 → ${settings.channel}（时间窗 ${settings.start_time} ~ ${settings.end_time}）`
   );
 
-  // 立即推送一次（不阻塞启动）
-  runQuotesNow(config)
-    .then((n) => logSuccess('stock', `首次行情推送成功 ${n} 个标的`))
-    .catch((err) => logError('stock', `首次行情推送失败: ${(err as Error).message}`));
+  // 启动时若已在推送窗口内则立即推送一次（不阻塞启动），否则由每秒检查到点触发
+  if (inPushWindow(new Date(), settings)) {
+    windowStarted = true;
+    runQuotesNow(config)
+      .then((n) => logSuccess('stock', `首次行情推送成功 ${n} 个标的`))
+      .catch((err) => logError('stock', `首次行情推送失败: ${(err as Error).message}`));
+  } else {
+    logInfo('stock', `当前不在推送时间窗（${settings.start_time} ~ ${settings.end_time}），到点后自动开始推送`);
+  }
 
-  // 间隔推送
+  // 间隔推送（仅限推送时间窗口内，窗口外跳过）
   quoteTimer = setInterval(() => {
+    if (!inPushWindow(new Date(), settings)) return;
     runQuotesNow(config).catch((err) => logError('stock', `行情推送失败: ${(err as Error).message}`));
   }, settings.interval_seconds * 1000);
 
-  // 报告到点检查（每秒一次，保证整点触发）
-  tickTimer = setInterval(() => checkReports(config), 1000);
+  // 报告到点检查 + 窗口起点检查（每秒一次，保证整点/准点触发）
+  tickTimer = setInterval(() => {
+    checkReports(config);
+    checkPushWindowStart(config);
+  }, 1000);
 }
 
 /** 停止股票调度器 */

@@ -20,7 +20,9 @@
   "stock_push": {
     "interval_seconds": 120,
     "channel": "console",
-    "webhook_url": ""
+    "webhook_url": "",
+    "start_time": "09:30",
+    "end_time": "15:00"
   },
   "daily_report": {
     "enabled": false,

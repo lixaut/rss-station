@@ -128,7 +128,9 @@ npm start
   "stock_push": {
     "interval_seconds": 120,
     "channel": "lark",
-    "webhook_url": "https://open.feishu.cn/open-apis/bot/v2/hook/xxx"
+    "webhook_url": "https://open.feishu.cn/open-apis/bot/v2/hook/xxx",
+    "start_time": "09:30",
+    "end_time": "15:00"
   },
   "daily_report": {
     "enabled": true,
@@ -148,6 +150,9 @@ npm start
 | `stock_push.interval_seconds` | 行情推送间隔（秒），必须大于 0 |
 | `stock_push.channel` | 推送通道：`console` / `lark`（飞书机器人 Webhook） |
 | `stock_push.webhook_url` | `lark` 通道必填 |
+| `stock_push.start_time` | 行情推送开始时间 `HH:MM`（默认 `09:30`，到达后准点推送首次；窗口外不推送） |
+| `stock_push.end_time` | 行情推送结束时间 `HH:MM`（默认 `15:00`，收盘后停止推送） |
+| `stock_push` 时间窗 | 按 A 股交易时段推送：上午 `start_time`～`11:30` + 下午 `13:00`～`end_time`，午间 11:30–13:00 休市不推送 |
 | `daily_report.enabled` | 是否启用盘后分析（默认 `false`） |
 | `daily_report.time` | 盘中报告时间 `HH:MM`（默认 `14:45`） |
 | `daily_report.close_time` | 收盘报告时间（如 `15:00`），省略则不推送 |
