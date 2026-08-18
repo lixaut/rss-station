@@ -44,6 +44,7 @@ src/
 └── stock/                # 股票监控模块（见下）
 data/                     # SQLite 数据库（已 gitignore）
 position_history.md      # 盘后分析历史（Markdown 彩色表格，最近 5 个交易日，可提交 git）
+market_claims.md         # 市场观点验证台账（第三方观点/预测按日期记录，后续用实际行情核对，可提交 git）
 ```
 
 ### 股票监控模块 `src/stock/`（重要）
@@ -72,7 +73,7 @@ position_history.md      # 盘后分析历史（Markdown 彩色表格，最近 5
 2. **订阅源唯一键是 URL**：去重缓存、定时器 map 均以 `subscription.url` 为 key，不要用自增 id（配置里没有 id）。
 3. **A 股显示习惯：涨红跌绿**（`formatter.ts` 中 `pctColor`），不要改成涨绿跌红。
 4. **Git 提交消息用中文**，遵循 Conventional Commits（如 `feat: 集成 stock-monitor 股票行情监控`、`refactor: 去 Web 化改为 JSON 配置`），正文描述改动点；末尾附 `Co-Authored-By: AtomCode (deepseek-v4-flash) <noreply@atomgit.com>` 行。
-5. **数据文件绝不入库**：`data/` 下所有文件（含 `*.db*`）已在 `.gitignore`；例外是项目根目录的 `position_history.md`（盘后分析历史，**有意提交**用于追踪每日复盘）。注意 `.gitignore` 中 `#` 注释只在**行首**生效，不要用行内注释（否则模式失效）。
+5. **数据文件绝不入库**：`data/` 下所有文件（含 `*.db*`）已在 `.gitignore`；例外是项目根目录的 `position_history.md`（盘后分析历史，**有意提交**用于追踪每日复盘）与 `market_claims.md`（市场观点验证台账，**有意提交**用于追踪观点应验）。注意 `.gitignore` 中 `#` 注释只在**行首**生效，不要用行内注释（否则模式失效）。
 6. **Windows 环境**：shell 是 Git Bash；命令行传中文给 curl 会乱码（GBK），测试接口用 `node -e` + `fetch` 或 UTF-8 文件，不要直接用 curl 内联中文。
 7. 不要把敏感信息（webhook URL、token）硬编码进源码或提交；`config.json` 含真实 webhook 地址，**不要提交真实配置**（提交前替换为示例值或使用 `.env` 思路）。
 8. 改动后必跑 `npx tsc --noEmit`（或 `npm run build`）确认无类型错误再交付。
@@ -85,6 +86,12 @@ position_history.md      # 盘后分析历史（Markdown 彩色表格，最近 5
 - 加/改 Webhook：编辑 `webhooks` 数组（`template` 支持 `text`/`markdown`/`json`/`feishu`）
 - 改股票标的/推送间隔/报告时间：编辑 `stocks` 与 `stock_push`、`daily_report`
 - **改完重启服务**（`npm start`）；或先 `npm run poll` / `npm run once` 验证再常驻
+
+### 记录市场观点（验证台账）
+- 读到含可验证观点（价格点位 / 时间窗口 / 政策判断）的文章时，录入 `market_claims.md`：按 `## YYYY-MM-DD 来源` 分节，每条观点带唯一 ID（C001 起）、可验证观点、验证标准、建议验证时间，状态初始为「待验证」
+- 观点尽量拆成单条可检验的陈述，避免模糊表述；来源注明媒体 / 作者 / 文章标题
+- 到验证时间后按「验证标准」核对实际行情 / 事实，更新状态（符合 / 部分符合 / 不符 / 无法验证），并追加验证记录（验证日期 + 实际数据 + 结论）
+- 该文件与 `position_history.md` 一样**有意提交 git**，用于长期追踪
 
 ### 验证 / 测试
 - 类型检查：`npx tsc --noEmit`
