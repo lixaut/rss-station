@@ -52,6 +52,7 @@ market_claims.md         # 市场观点验证台账（第三方观点/预测按�
 | `quote.ts` | 腾讯行情批量拉取（**响应为 GBK 编码**，必须 `responseType:'arraybuffer'` + `new TextDecoder('gbk')` 解码） |
 | `formatter.ts` | 控制台 ANSI 输出 + 飞书交互卡片 + 生命周期通知文案 |
 | `scheduler.ts` | 调度：按 `interval_seconds` 推送行情；`runQuotesNow` 供 CLI 调用；生命周期通知（启动/午间休市/下午开盘/收盘/停止） |
+| `time_period.ts` | 时段判断：`detectTimePeriod(config)` 返回当前时段（盘前/早盘/午间/午盘/盘后/休市），供启动通知使用 |
 
 ## 数据库约定（SQLite, WAL 模式）
 

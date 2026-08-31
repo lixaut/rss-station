@@ -8,6 +8,7 @@ import {
   formatNoticeConsole,
   formatNoticeLarkCard,
 } from './formatter';
+import { detectTimePeriod } from './time_period';
 
 // ===== 推送通道（console / lark） =====
 
@@ -124,18 +125,6 @@ export function pushStockNotice(title: string, lines: string[]): Promise<void> {
   });
 }
 
-/** 组装启动通知正文（含推送时间点信息） */
-function buildStartupNoticeLines(config: AppConfig): string[] {
-  const settings = config.stock_push;
-  const names = config.stocks.map((i) => i.alias || i.code).join('、');
-  const lines = [
-    `今天为您盯 ${config.stocks.length} 只标的：${names}`,
-    `每 ${settings.interval_seconds} 秒为您播报一次行情`,
-    `时间安排：上午 ${settings.start_time} 开盘，11:30 午间休市，下午 13:00 开盘，${settings.end_time} 收盘`,
-  ];
-  return lines;
-}
-
 /** 收盘结束通知（当日最后一次通知），防重复 */
 function sendCloseNotice(config: AppConfig): void {
   if (closeNotified) return;
@@ -143,7 +132,7 @@ function sendCloseNotice(config: AppConfig): void {
   pushLifecycleNotice(config, '🌙 今日已收盘', ['辛苦啦，今天的盯盘结束，明天开盘见！']);
 }
 
-/** 每秒检查：午间休市/下午开盘/收盘等股市时间节点通知（交易日，每天各一次） */
+/** 每秒检查：午间休市/下午开盘/收盘等股市时间节点通知（交易日，每天各一次，不补发） */
 function checkLifecycleEvents(config: AppConfig): void {
   const now = new Date();
   if (!isTradeDay(now)) return;
@@ -209,10 +198,8 @@ function checkPushWindowStart(config: AppConfig): void {
 export function startStockScheduler(config: AppConfig): void {
   stopStockScheduler();
   windowStarted = false;
-  noticeDayKey = '';
-  lunchNotified = false;
-  afternoonNotified = false;
-  closeNotified = false;
+  const today = localDateKey(new Date());
+  noticeDayKey = today;
   lastConfig = config;
 
   const settings = config.stock_push;
@@ -226,6 +213,16 @@ export function startStockScheduler(config: AppConfig): void {
     'stock',
     `调度器启动：${items.length} 个标的，每 ${settings.interval_seconds} 秒推送一次 → ${settings.channel}（时间窗 ${settings.start_time} ~ ${settings.end_time}）`
   );
+
+  // 根据启动时当前时间预判当日已错过哪些生命周期节点（不补发）
+  const now = new Date();
+  if (isTradeDay(now)) {
+    const t = now.getHours() * 60 + now.getMinutes();
+    if (t >= 11 * 60 + 30) lunchNotified = true;
+    if (t >= 13 * 60) afternoonNotified = true;
+    const [eh, em] = parseHHMM(settings.end_time);
+    if (t >= eh * 60 + em) closeNotified = true;
+  }
 
   // 启动时若已在推送窗口内则立即推送一次（不阻塞启动），否则由每秒检查到点触发
   if (inPushWindow(new Date(), settings)) {
@@ -249,8 +246,9 @@ export function startStockScheduler(config: AppConfig): void {
     checkLifecycleEvents(config);
   }, 1000);
 
-  // 启动通知：每次启动成功都推送（含推送时间点信息）
-  pushLifecycleNotice(config, '📊 盯盘服务已开启', buildStartupNoticeLines(config));
+  // 启动通知：根据当前时段推送差异化提示
+  const timeInfo = detectTimePeriod(config);
+  pushLifecycleNotice(config, timeInfo.title, timeInfo.lines);
 }
 
 /** 停止股票调度器 */
