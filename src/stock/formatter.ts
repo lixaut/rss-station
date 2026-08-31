@@ -1,6 +1,4 @@
 import type { Quote } from './quote';
-import type { KlineIndicators } from './kline';
-import type { ScoreResult } from './strategy';
 
 // ===== 控制台 ANSI 颜色 =====
 const RED = '\x1b[31m';
@@ -22,12 +20,6 @@ function timeStr(): string {
   const d = new Date();
   const pad = (n: number) => String(n).padStart(2, '0');
   return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
-}
-
-function reportTimeStr(): string {
-  const d = new Date();
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
 /** 行情接口返回 yyyyMMddHHmmss，转换为 HH:MM:SS */
@@ -224,130 +216,40 @@ export function formatLarkCard(quotes: Quote[]) {
   };
 }
 
-// ===== 盘后分析（14:45 均线/形态 + 仓位建议） =====
+// ===== 生命周期通知（启动/午间休市/下午开盘/收盘/停止） =====
 
-/** 盘后分析中单个标的的展示项 */
-export interface ReportItem {
-  name: string;
-  code: string;
-  type: 'stock' | 'index';
-  price: string;
-  change: string;
-  change_pct: string;
-  ind: KlineIndicators;
-  score: number;
-  signal: string;
-  position: number;
-  reasons: Array<[string, number]>;
+/** 通知时间戳 yyyy-MM-dd HH:MM */
+function noticeTimeStr(): string {
+  const d = new Date();
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-function maText(ma: Record<number, number | null>): string {
-  const parts: string[] = [];
-  for (const p of Object.keys(ma).map(Number).sort((a, b) => a - b)) {
-    const v = ma[p];
-    parts.push(v != null ? `MA${p} ${v.toFixed(2)}` : `MA${p} --`);
-  }
-  return parts.join(' ');
+/** 控制台生命周期通知：标题 + 正文行 */
+export function formatNoticeConsole(title: string, lines: string[]): string {
+  return [`${title}  ${noticeTimeStr()}`, ...lines].join('\n');
 }
 
-function candleText(ind: KlineIndicators): string {
-  const body = `${(ind.body * 100).toFixed(1)}%`;
-  const upper = `${(ind.upper_shadow * 100).toFixed(1)}%`;
-  const lower = `${(ind.lower_shadow * 100).toFixed(1)}%`;
-  const kind = ind.is_yang ? '阳线' : '阴线';
-  return `${kind} 实体 ${body} 上影 ${upper} 下影 ${lower}`;
-}
-
-function signalCounts(items: ReportItem[]): { up: number; down: number; flat: number } {
-  const up = items.filter((it) => it.signal === '强多' || it.signal === '偏多').length;
-  const down = items.filter((it) => it.signal === '强空' || it.signal === '偏空').length;
-  return { up, down, flat: items.length - up - down };
-}
-
-export function formatReportConsole(items: ReportItem[], overall: number): string {
-  const lines: string[] = [`📋 盘后分析 ${reportTimeStr()}`];
-  for (const it of items) {
-    const ind = it.ind;
-    const color = pctColor(it.change_pct);
-    lines.push(`═══ ${it.name}(${it.code}) ═══`);
-    lines.push(
-      `现价 ${it.price} ${color}${trendIcon(it.change_pct)} ${changePct(it as unknown as Quote)} (${signed(
-        it.change
-      )})${RESET}`
-    );
-    lines.push(maText(ind.ma));
-    lines.push(candleText(ind));
-    lines.push(`信号 ${it.signal} (${it.score >= 0 ? '+' : ''}${it.score.toFixed(2)}) → 建议仓位 ${(it.position * 100).toFixed(0)}%`);
-    for (const [text, value] of it.reasons) {
-      lines.push(`   ${text}  ${value >= 0 ? '+' : ''}${value.toFixed(2)}`);
-    }
-    lines.push(`   合计 ${it.score >= 0 ? '+' : ''}${it.score.toFixed(2)}`);
-  }
-  const counts = signalCounts(items);
-  lines.push('═'.repeat(46));
-  lines.push(
-    `综合建议仓位 ${(overall * 100).toFixed(0)}% · 多 ${counts.up} · 空 ${counts.down} · 中性 ${counts.flat}`
-  );
-  lines.push('⚠ 技术规则输出，非投资建议');
-  return lines.join('\n');
-}
-
-export function formatReportLarkCard(items: ReportItem[], overall: number) {
-  const elements: any[] = [];
-  for (const it of items) {
-    const ind = it.ind;
-    const pct = asFloat(it.change_pct);
-    const color = pct > 0 ? 'red' : pct < 0 ? 'green' : 'grey';
-    elements.push({
-      tag: 'div',
-      fields: [
-        {
-          is_short: true,
-          text: {
-            tag: 'lark_md',
-            content: `**${it.name}** ${it.code}\n现价 **${it.price}** ${trendIcon(it.change_pct)} <font color='${color}'>${changePct(it as unknown as Quote)}</font>`,
-          },
-        },
-        {
-          is_short: true,
-          text: {
-            tag: 'lark_md',
-            content: `信号 **${it.signal}** (${it.score >= 0 ? '+' : ''}${it.score.toFixed(2)})\n建议仓位 **${(it.position * 100).toFixed(0)}%**`,
-          },
-        },
-      ],
-    });
-    const detail = it.reasons.map(([t, v]) => `${t} ${v >= 0 ? '+' : ''}${v.toFixed(2)}`).join(' ｜ ');
-    elements.push({
-      tag: 'note',
-      elements: [
-        {
-          tag: 'plain_text',
-          content: `${maText(ind.ma)} ｜ ${candleText(ind)}\n分析: ${detail} ＝ ${it.score >= 0 ? '+' : ''}${it.score.toFixed(2)} → ${it.signal} → 建议 ${(it.position * 100).toFixed(0)}%`,
-        },
-      ],
-    });
-  }
-  const counts = signalCounts(items);
-  elements.push({ tag: 'hr' });
-  elements.push({
-    tag: 'note',
-    elements: [
-      {
-        tag: 'plain_text',
-        content: `综合建议仓位 ${(overall * 100).toFixed(0)}% · 多 ${counts.up} · 空 ${counts.down} · 中性 ${counts.flat} ｜ ⚠ 技术规则输出，非投资建议`,
-      },
-    ],
-  });
+/** 飞书生命周期通知卡片（简单文本卡片，蓝色头） */
+export function formatNoticeLarkCard(title: string, lines: string[]): unknown {
   return {
     msg_type: 'interactive',
     card: {
       config: { wide_screen_mode: true },
       header: {
         template: 'blue',
-        title: { tag: 'plain_text', content: `📋 盘后分析 ${reportTimeStr()}` },
+        title: { tag: 'plain_text', content: title },
       },
-      elements,
+      elements: [
+        {
+          tag: 'div',
+          fields: [{ is_short: false, text: { tag: 'lark_md', content: lines.join('\n') } }],
+        },
+        {
+          tag: 'note',
+          elements: [{ tag: 'plain_text', content: noticeTimeStr() }],
+        },
+      ],
     },
   };
 }

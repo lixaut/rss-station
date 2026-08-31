@@ -1,17 +1,13 @@
 import axios from 'axios';
-import { AppConfig, StockItemConfig, StockPushConfig, DailyReportConfig } from '../config';
+import { AppConfig, StockItemConfig, StockPushConfig } from '../config';
 import { logInfo, logSuccess, logError, logBlock } from '../log';
 import { fetchQuotes, StockItem } from './quote';
-import { fetchDailyKlines, computeIndicators } from './kline';
-import { scoreStock, overallPosition } from './strategy';
 import {
   formatConsole,
   formatLarkCard,
-  formatReportConsole,
-  formatReportLarkCard,
-  ReportItem,
+  formatNoticeConsole,
+  formatNoticeLarkCard,
 } from './formatter';
-import { saveReport } from './storage';
 
 // ===== 推送通道（console / lark） =====
 
@@ -19,15 +15,15 @@ export class PusherError extends Error {}
 
 interface Pusher {
   push(quotes: any): Promise<void>;
-  pushReport(report: { console: string; lark: unknown }): Promise<void>;
+  pushNotice(notice: { console: string; lark: unknown }): Promise<void>;
 }
 
 class ConsolePusher implements Pusher {
   async push(quotes: any): Promise<void> {
     logBlock('stock', '行情推送', formatConsole(quotes));
   }
-  async pushReport(report: { console: string }): Promise<void> {
-    logBlock('stock', '盘后分析报告', report.console);
+  async pushNotice(notice: { console: string }): Promise<void> {
+    logBlock('stock', '盯盘通知', notice.console);
   }
 }
 
@@ -51,8 +47,8 @@ class LarkPusher implements Pusher {
     await this.post(formatLarkCard(quotes));
   }
 
-  async pushReport(report: { lark: unknown }): Promise<void> {
-    await this.post(report.lark);
+  async pushNotice(notice: { lark: unknown }): Promise<void> {
+    await this.post(notice.lark);
   }
 }
 
@@ -88,123 +84,89 @@ function localDateKey(d: Date): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
-function localTimeKey(d: Date): string {
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
-}
-
-/** 带符号涨跌幅，如 +0.09% / -1.29%；缺失显示 -- */
-function signedPct(pct: string): string {
-  const t = String(pct ?? '').trim();
-  if (!t || t === '--') return '--';
-  return t.startsWith('-') ? `${t}%` : `+${t}%`;
-}
-
-/** 涨跌幅颜色（A股习惯涨红跌绿）：红 #d33 / 绿 #0a8 / 平黄 #e6a700 */
-function pctColor(pct: string): string {
-  const v = parseFloat(pct);
-  if (v > 0) return '#d33';
-  if (v < 0) return '#0a8';
-  return '#e6a700';
-}
-
-/** 信号颜色：强多/偏多看涨红，强空/偏空看跌绿，中性黄 */
-function signalColor(signal: string): string {
-  if (signal === '强多' || signal === '偏多') return '#d33';
-  if (signal === '强空' || signal === '偏空') return '#0a8';
-  return '#e6a700';
-}
-
-/** 生成带颜色的 HTML span（Markdown 内嵌，GitHub/VS Code 预览渲染） */
-function colorSpan(text: string, color: string): string {
-  return `<span style="color:${color}">${text}</span>`;
-}
-
-/**
- * 盘后分析结果的 Markdown 分节（以 `## YYYY-MM-DD` 标题行开头，便于 storage.ts 按日期分节滚动存储）。
- * 浏览器/VS Code 预览即渲染彩色表格（涨红跌绿），每个标的一行（名称/现价/涨跌幅/信号/建议仓位），简洁明了便于复盘。
- */
-function buildReportMarkdown(items: ReportItem[], overall: number): string {
-  const now = new Date();
-  const date = localDateKey(now);
-  const time = localTimeKey(now);
-  const up = items.filter((it) => it.signal === '强多' || it.signal === '偏多').length;
-  const down = items.filter((it) => it.signal === '强空' || it.signal === '偏空').length;
-  const flat = items.length - up - down;
-
-  const title = `## ${date} ${time} · 综合仓位 **${(overall * 100).toFixed(0)}%** · 多 ${up} · 空 ${down} · 平 ${flat}`;
-
-  const rows = [
-    '| 标的 | 现价 | 涨跌幅 | 信号 | 建议仓位 |',
-    '|------|------|--------|------|----------|',
-    ...items.map((it) =>
-      `| ${it.name} | ${it.price || '--'} | ${colorSpan(signedPct(it.change_pct), pctColor(it.change_pct))} | ${colorSpan(it.signal, signalColor(it.signal))} | ${(it.position * 100).toFixed(0)}% |`
-    ),
-  ];
-
-  return `${title}\n\n${rows.join('\n')}\n`;
-}
-
-/** 立即执行一次盘后分析（均线/形态 + 仓位建议）并推送，返回标的数量 */
-export async function runReportNow(config: AppConfig): Promise<number> {
-  const items = config.stocks;
-  if (items.length === 0) throw new Error('暂无配置股票标的');
-  const maPeriods = config.daily_report.ma_periods;
-
-  const quoteItems = toQuoteItems(items);
-  const quotes = await fetchQuotes(quoteItems);
-  const quoteMap = new Map(quotes.map((q) => [q.symbol, q]));
-
-  const reportItems: ReportItem[] = [];
-  for (const s of items) {
-    const sym = `${s.market}${s.code}`;
-    const q = quoteMap.get(sym);
-    const klines = await fetchDailyKlines({
-      code: s.code,
-      market: s.market,
-      type: s.type,
-      alias: s.alias || undefined,
-    });
-    const ind = computeIndicators(klines, maPeriods);
-    const { score, position, signal, reasons } = scoreStock(ind);
-    reportItems.push({
-      name: s.alias || q?.name || s.code,
-      code: s.code,
-      type: s.type,
-      price: q?.price || '--',
-      change: q?.change || '',
-      change_pct: q?.change_pct || '',
-      ind,
-      score,
-      signal,
-      position,
-      reasons,
-    });
-  }
-
-  const overall = overallPosition(reportItems.map((it) => [it.score, it.position] as [number, number]));
-  const report = {
-    console: formatReportConsole(reportItems, overall),
-    lark: formatReportLarkCard(reportItems, overall),
-  };
-  await getPusher(config.stock_push).pushReport(report);
-
-  try {
-    const path = saveReport(localDateKey(new Date()), buildReportMarkdown(reportItems, overall));
-    logInfo('stock', `盘后分析已存入 ${path}`);
-  } catch (err) {
-    logError('stock', `盘后分析存储失败: ${(err as Error).message}`);
-  }
-  return reportItems.length;
-}
-
 // ===== 调度器 =====
 
 let quoteTimer: ReturnType<typeof setInterval> | null = null;
 let tickTimer: ReturnType<typeof setInterval> | null = null;
-let todayKey = '';
-const reported = new Set<string>(); // 当天已推送的报告时刻
 let windowStarted = false; // 当天是否已进入推送窗口并完成首次推送
+
+// 生命周期通知状态（每天重置）
+let lastConfig: AppConfig | null = null; // 最近一次启动的配置（供进程退出通知使用）
+let noticeDayKey = ''; // 通知日期标记
+let lunchNotified = false; // 当天是否已发午间休市通知
+let afternoonNotified = false; // 当天是否已发下午开盘通知
+let closeNotified = false; // 当天是否已发收盘通知
+
+// ===== 生命周期通知（启动/午休/下午开盘/收盘/停止） =====
+
+/** 推送一条生命周期通知（受 event_notify 开关控制），失败仅记日志，不阻塞调用方 */
+function pushLifecycleNotice(config: AppConfig, title: string, lines: string[]): void {
+  if (!config.stock_push.event_notify) return;
+  const notice = {
+    console: formatNoticeConsole(title, lines),
+    lark: formatNoticeLarkCard(title, lines),
+  };
+  getPusher(config.stock_push)
+    .pushNotice(notice)
+    .catch((err) => logError('stock', `通知推送失败(${title}): ${(err as Error).message}`));
+}
+
+/** 进程退出前调用：推送停止通知（未启动股票调度或已关闭通知时静默跳过） */
+export function pushStockNotice(title: string, lines: string[]): Promise<void> {
+  const config = lastConfig;
+  if (!config || !config.stock_push.event_notify) return Promise.resolve();
+  const notice = {
+    console: formatNoticeConsole(title, lines),
+    lark: formatNoticeLarkCard(title, lines),
+  };
+  return getPusher(config.stock_push).pushNotice(notice).catch((err) => {
+    logError('stock', `通知推送失败(${title}): ${(err as Error).message}`);
+  });
+}
+
+/** 组装启动通知正文（含推送时间点信息） */
+function buildStartupNoticeLines(config: AppConfig): string[] {
+  const settings = config.stock_push;
+  const names = config.stocks.map((i) => i.alias || i.code).join('、');
+  const lines = [
+    `今天为您盯 ${config.stocks.length} 只标的：${names}`,
+    `每 ${settings.interval_seconds} 秒为您播报一次行情`,
+    `时间安排：上午 ${settings.start_time} 开盘，11:30 午间休市，下午 13:00 开盘，${settings.end_time} 收盘`,
+  ];
+  return lines;
+}
+
+/** 收盘结束通知（当日最后一次通知），防重复 */
+function sendCloseNotice(config: AppConfig): void {
+  if (closeNotified) return;
+  closeNotified = true;
+  pushLifecycleNotice(config, '🌙 今日已收盘', ['辛苦啦，今天的盯盘结束，明天开盘见！']);
+}
+
+/** 每秒检查：午间休市/下午开盘/收盘等股市时间节点通知（交易日，每天各一次） */
+function checkLifecycleEvents(config: AppConfig): void {
+  const now = new Date();
+  if (!isTradeDay(now)) return;
+  const today = localDateKey(now);
+  if (today !== noticeDayKey) {
+    noticeDayKey = today;
+    lunchNotified = false;
+    afternoonNotified = false;
+    closeNotified = false;
+    windowStarted = false; // 跨天重置，保证次日开盘准点首推
+  }
+  const t = now.getHours() * 60 + now.getMinutes();
+  const [eh, em] = parseHHMM(config.stock_push.end_time);
+  if (t >= 11 * 60 + 30 && !lunchNotified) {
+    lunchNotified = true;
+    pushLifecycleNotice(config, '🌤 午间休市', ['股市 11:30-13:00 午休，您也去休息一下吧，下午 13:00 我再回来继续盯']);
+  }
+  if (t >= 13 * 60 && !afternoonNotified) {
+    afternoonNotified = true;
+    pushLifecycleNotice(config, '⏰ 下午盘开启', ['13:00 了，我回来继续为您盯盘，今天剩下的行情交给我']);
+  }
+  if (t >= eh * 60 + em) sendCloseNotice(config);
+}
 
 function isTradeDay(d: Date): boolean {
   return d.getDay() >= 1 && d.getDay() <= 5; // 简单档：周一~周五，节假日不排除
@@ -243,50 +205,15 @@ function checkPushWindowStart(config: AppConfig): void {
     .catch((err) => logError('stock', `窗口起点行情推送失败: ${(err as Error).message}`));
 }
 
-/** 到点推送：盘中/收盘报告各一次（交易日） */
-function checkReports(config: AppConfig): void {
-  const daily: DailyReportConfig = config.daily_report;
-  if (!daily.enabled) return;
-  const now = new Date();
-  if (!isTradeDay(now)) return;
-
-  const today = localDateKey(now);
-  if (today !== todayKey) {
-    todayKey = today;
-    reported.clear();
-    windowStarted = false;
-  }
-
-  const schedule: Array<[string, boolean]> = [];
-  if (daily.time) schedule.push([daily.time, false]);
-  if (daily.close_time) schedule.push([daily.close_time, true]);
-
-  for (const [t, isClose] of schedule) {
-    if (reported.has(t)) continue;
-    const [h, m] = parseHHMM(t);
-    if (now.getHours() > h || (now.getHours() === h && now.getMinutes() >= m)) {
-      reported.add(t);
-      const label = isClose ? '收盘报告' : '盘中报告';
-      runReportNow(config)
-        .then((count) => {
-          logSuccess('stock', `${label} 推送成功 ${count} 个标的`);
-          if (isClose && daily.auto_exit) {
-            // 整合后语义：收盘后停止当日股票调度，不退出整个服务
-            logInfo('stock', '收盘报告已推送，今日股票调度停止（服务继续运行）');
-            stopStockScheduler();
-          }
-        })
-        .catch((err) => logError('stock', `${label}失败: ${(err as Error).message}`));
-    }
-  }
-}
-
-/** 启动股票调度器（行情间隔推送 + 报告到点触发） */
+/** 启动股票调度器（行情间隔推送 + 股市时间节点通知） */
 export function startStockScheduler(config: AppConfig): void {
   stopStockScheduler();
-  todayKey = '';
-  reported.clear();
   windowStarted = false;
+  noticeDayKey = '';
+  lunchNotified = false;
+  afternoonNotified = false;
+  closeNotified = false;
+  lastConfig = config;
 
   const settings = config.stock_push;
   const items = config.stocks;
@@ -316,11 +243,14 @@ export function startStockScheduler(config: AppConfig): void {
     runQuotesNow(config).catch((err) => logError('stock', `行情推送失败: ${(err as Error).message}`));
   }, settings.interval_seconds * 1000);
 
-  // 报告到点检查 + 窗口起点检查（每秒一次，保证整点/准点触发）
+  // 窗口起点检查 + 股市时间节点通知（每秒一次，保证整点/准点触发）
   tickTimer = setInterval(() => {
-    checkReports(config);
     checkPushWindowStart(config);
+    checkLifecycleEvents(config);
   }, 1000);
+
+  // 启动通知：每次启动成功都推送（含推送时间点信息）
+  pushLifecycleNotice(config, '📊 盯盘服务已开启', buildStartupNoticeLines(config));
 }
 
 /** 停止股票调度器 */

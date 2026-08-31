@@ -10,8 +10,7 @@
     "start:prod": "npm run build && npm start",
     "monitor": "node dist/index.js",
     "poll": "node dist/index.js --poll",
-    "once": "node dist/index.js --once",
-    "report": "node dist/index.js --report"
+    "once": "node dist/index.js --once"
   },
   "dependencies": {
     "axios": "^1.7.0",

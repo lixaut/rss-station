@@ -7,7 +7,7 @@
 RSS Station — 纯 CLI（无 Web 端）的 Node.js/TypeScript 应用，通过外置 `config.json` 驱动，包含两大功能模块：
 
 1. **RSS 订阅监控 & Webhook 推送**：定时抓取 RSS/网页，增量检测新文章，推送到钉钉、飞书、Slack、企业微信等平台。
-2. **股票行情监控**：定时拉取股票/指数行情，推送控制台/飞书；支持盘中与收盘盘后分析（均线/形态 + 仓位建议）。
+2. **股票行情监控**：定时拉取股票/指数行情，推送控制台/飞书；按股市时间发送启动/午休/开盘/收盘/退出温馨提醒。
 
 **无 Web 端**：没有 Express、没有管理面板、没有 HTTP 服务，所有配置都在 `config.json`。
 
@@ -16,10 +16,9 @@ RSS Station — 纯 CLI（无 Web 端）的 Node.js/TypeScript 应用，通过�
 | 命令 | 说明 |
 |---|---|
 | `npm run build` | 编译：`tsc`（输出到 dist/） |
-| `npm start` / `npm run monitor` | **常驻运行**：RSS 轮询 + 股票推送 + 报告调度 |
+| `npm start` / `npm run monitor` | **常驻运行**：RSS 轮询 + 股票推送 |
 | `npm run poll` | 仅触发一次 RSS 轮询后退出（配合 Windows 计划任务） |
 | `npm run once` | 跑一轮 RSS 轮询 + 一次行情推送后退出（验证用） |
-| `npm run report` | 立即执行一次盘后分析后退出 |
 | `node dist/index.js -c 路径.json` | 指定配置文件（默认项目根目录 `config.json`） |
 | `npx tsc --noEmit` | 快速类型检查（改动后必跑，等价验证） |
 
@@ -32,7 +31,7 @@ RSS Station — 纯 CLI（无 Web 端）的 Node.js/TypeScript 应用，通过�
 - 关键依赖：`axios`、`better-sqlite3`、`rss-parser`、`cheerio`、`tsx`（dev）
 
 ```
-config.json               # 唯一配置文件（订阅 / Webhook / 股票 / 报告）
+config.json               # 唯一配置文件（订阅 / Webhook / 股票）
 src/
 ├── index.ts              # CLI 入口：解析参数 → 一次性模式或常驻双调度
 ├── config.ts             # config.json 解析校验（parseConfig / loadConfig）+ dbPath
@@ -43,7 +42,6 @@ src/
 ├── webhook/sender.ts     # 多平台 Webhook 发送（webhooks 由 config 传入）
 └── stock/                # 股票监控模块（见下）
 data/                     # SQLite 数据库（已 gitignore）
-position_history.md      # 盘后分析历史（Markdown 彩色表格，最近 5 个交易日，可提交 git）
 market_claims.md         # 市场观点验证台账（第三方观点/预测按日期记录，后续用实际行情核对，可提交 git）
 ```
 
@@ -52,11 +50,8 @@ market_claims.md         # 市场观点验证台账（第三方观点/预测按�
 | 文件 | 职责 |
 |---|---|
 | `quote.ts` | 腾讯行情批量拉取（**响应为 GBK 编码**，必须 `responseType:'arraybuffer'` + `new TextDecoder('gbk')` 解码） |
-| `kline.ts` | 新浪日K线（JSONP 解析）+ 均线/影线/实体/量比指标 |
-| `strategy.ts` | 打分规则引擎 → 信号/仓位建议（权重常量定义在文件顶部） |
-| `formatter.ts` | 控制台 ANSI 输出 + 飞书交互卡片 |
-| `storage.ts` | 盘后分析历史 `position_history.md`（Markdown 表格，按 `## 日期` 行分节），滚动保留最近 5 个交易日 |
-| `scheduler.ts` | 调度：按 `interval_seconds` 推送行情；盘中/收盘报告到点触发；`runQuotesNow` / `runReportNow` 供 CLI 调用 |
+| `formatter.ts` | 控制台 ANSI 输出 + 飞书交互卡片 + 生命周期通知文案 |
+| `scheduler.ts` | 调度：按 `interval_seconds` 推送行情；`runQuotesNow` 供 CLI 调用；生命周期通知（启动/午间休市/下午开盘/收盘/停止） |
 
 ## 数据库约定（SQLite, WAL 模式）
 
@@ -64,7 +59,7 @@ market_claims.md         # 市场观点验证台账（第三方观点/预测按�
 - 表：`articles`、`crawl_state`
 - **时间字段统一用 `datetime('now','localtime')`**，新增表必须遵循
 - `articles` 去重唯一索引：`(subscription_url, guid)`；`crawl_state` 以 `subscription_url` 为主键存最近 5 条 GUID 缓存
-- **配置不存数据库**：所有配置（订阅/Webhook/股票/报告）都从 config.json 读取，数据库只存运行时状态
+- **配置不存数据库**：所有配置（订阅/Webhook/股票）都从 config.json 读取，数据库只存运行时状态
 - 表结构变更走 `db.ts` 内迁移模式（`CREATE TABLE IF NOT EXISTS`），不能删库
 
 ## 开发约定与规则
@@ -73,7 +68,7 @@ market_claims.md         # 市场观点验证台账（第三方观点/预测按�
 2. **订阅源唯一键是 URL**：去重缓存、定时器 map 均以 `subscription.url` 为 key，不要用自增 id（配置里没有 id）。
 3. **A 股显示习惯：涨红跌绿**（`formatter.ts` 中 `pctColor`），不要改成涨绿跌红。
 4. **Git 提交消息用中文**，遵循 Conventional Commits（如 `feat: 集成 stock-monitor 股票行情监控`、`refactor: 去 Web 化改为 JSON 配置`），正文描述改动点；末尾附 `Co-Authored-By: AtomCode (deepseek-v4-flash) <noreply@atomgit.com>` 行。
-5. **数据文件绝不入库**：`data/` 下所有文件（含 `*.db*`）已在 `.gitignore`；例外是项目根目录的 `position_history.md`（盘后分析历史，**有意提交**用于追踪每日复盘）与 `market_claims.md`（市场观点验证台账，**有意提交**用于追踪观点应验）。注意 `.gitignore` 中 `#` 注释只在**行首**生效，不要用行内注释（否则模式失效）。
+5. **数据文件绝不入库**：`data/` 下所有文件（含 `*.db*`）已在 `.gitignore`；例外是项目根目录的 `market_claims.md`（市场观点验证台账，**有意提交**用于追踪观点应验）。注意 `.gitignore` 中 `#` 注释只在**行首**生效，不要用行内注释（否则模式失效）。
 6. **Windows 环境**：shell 是 Git Bash；命令行传中文给 curl 会乱码（GBK），测试接口用 `node -e` + `fetch` 或 UTF-8 文件，不要直接用 curl 内联中文。
 7. 不要把敏感信息（webhook URL、token）硬编码进源码或提交；`config.json` 含真实 webhook 地址，**不要提交真实配置**（提交前替换为示例值或使用 `.env` 思路）。
 8. 改动后必跑 `npx tsc --noEmit`（或 `npm run build`）确认无类型错误再交付。
@@ -84,26 +79,23 @@ market_claims.md         # 市场观点验证台账（第三方观点/预测按�
 ### 修改配置（无 Web 面板，直接改 config.json）
 - 加/改 RSS 订阅：编辑 `config.json` 的 `subscriptions` 数组（scrape 类型需填 CSS 选择器）
 - 加/改 Webhook：编辑 `webhooks` 数组（`template` 支持 `text`/`markdown`/`json`/`feishu`）
-- 改股票标的/推送间隔/报告时间：编辑 `stocks` 与 `stock_push`、`daily_report`
+- 改股票标的/推送间隔/时间窗：编辑 `stocks` 与 `stock_push`
 - **改完重启服务**（`npm start`）；或先 `npm run poll` / `npm run once` 验证再常驻
 
 ### 记录市场观点（验证台账）
 - 读到含可验证观点（价格点位 / 时间窗口 / 政策判断）的文章时，录入 `market_claims.md`：按 `## YYYY-MM-DD 来源` 分节，每条观点带唯一 ID（C001 起）、可验证观点、验证标准、建议验证时间，状态初始为「待验证」
 - 观点尽量拆成单条可检验的陈述，避免模糊表述；来源注明媒体 / 作者 / 文章标题
 - 到验证时间后按「验证标准」核对实际行情 / 事实，更新状态（符合 / 部分符合 / 不符 / 无法验证），并追加验证记录（验证日期 + 实际数据 + 结论）
-- 该文件与 `position_history.md` 一样**有意提交 git**，用于长期追踪
+- 该文件**有意提交 git**，用于长期追踪
 
 ### 验证 / 测试
 - 类型检查：`npx tsc --noEmit`
 - 单次 RSS 轮询：`npm run poll`（或 `--once` 同时验证行情推送）
-- 盘后分析：`npm run report`
 - **验证配置不要用真实飞书 webhook**：测试时可把 `webhooks` 置空、`stock_push.channel` 改为 `console`，避免打扰真实群聊
 - 行情接口非交易时段返回最近收盘数据；推送失败会记日志并继续下一轮，不会中断服务
 
 ## 已知事项 / 坑
 
 - 腾讯行情接口返回 **GBK 编码**，直接按 UTF-8 解析会乱码——`quote.ts` 已处理，新增行情相关代码不要绕过
-- 新浪日K线对细分指数（如 399265/980022）也稳定，优先用新浪源（`kline.ts` 已注明）
-- 收盘报告推送后按 `auto_exit` **仅停止当日股票调度，不退出整个服务**（原 Python 版是退出进程，移植后语义已适配）
-- 盘后分析是技术规则打分输出，**非投资建议**；推送文案保留"⚠ 技术规则输出，非投资建议"提示
-- 常驻模式下 `daily_report.auto_exit` 停止股票调度后，`--poll`/`--once`/`--report` 手动命令仍可独立运行
+- 常驻模式下，`--poll`/`--once` 手动命令仍可独立运行
+- 股票生命周期通知由 `stock_push.event_notify` 控制（默认开启）：启动/午间休市(11:30)/下午开盘(13:00)/收盘(15:00)/进程退出前各推一条，文案按股市时间叙事、不含技术词；`pushStockNotice` 供 `index.ts` 信号处理调用，退出推送限时 2s 不阻塞

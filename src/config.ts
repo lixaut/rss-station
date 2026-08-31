@@ -43,14 +43,8 @@ export interface StockPushConfig {
   start_time: string;
   /** 行情推送时间窗口结束（HH:MM），默认 15:00 收盘后停止 */
   end_time: string;
-}
-
-export interface DailyReportConfig {
-  enabled: boolean;
-  time: string;
-  close_time: string | null;
-  auto_exit: boolean;
-  ma_periods: number[];
+  /** 生命周期通知开关（启动/午休/下午开盘/收盘/停止），默认 true */
+  event_notify: boolean;
 }
 
 export interface AppConfig {
@@ -58,7 +52,6 @@ export interface AppConfig {
   webhooks: WebhookConfig[];
   stocks: StockItemConfig[];
   stock_push: StockPushConfig;
-  daily_report: DailyReportConfig;
 }
 
 // ===== 常量与默认值 =====
@@ -82,14 +75,7 @@ const DEFAULT_STOCK_PUSH: StockPushConfig = {
   webhook_url: '',
   start_time: '09:30',
   end_time: '15:00',
-};
-
-const DEFAULT_DAILY_REPORT: DailyReportConfig = {
-  enabled: false,
-  time: '14:45',
-  close_time: null,
-  auto_exit: true,
-  ma_periods: [5, 10, 20, 60],
+  event_notify: true,
 };
 
 /** 未显式指定市场时按代码前缀推断（股票：6/9 开头为 sh；指数：399 开头为 sz，其余为 sh） */
@@ -201,40 +187,14 @@ function parseStockPush(raw: unknown): StockPushConfig {
   if (startMin >= endMin) {
     throw new Error('stock_push.start_time 必须早于 end_time');
   }
+  const eventNotify = Boolean(p.event_notify ?? true);
   return {
     interval_seconds: interval,
     channel: channel as 'console' | 'lark',
     webhook_url: webhookUrl,
     start_time: startTime,
     end_time: endTime,
-  };
-}
-
-function parseDailyReport(raw: unknown): DailyReportConfig {
-  if (raw === undefined) return { ...DEFAULT_DAILY_REPORT };
-  const d = asObject(raw, 'daily_report');
-  const enabled = Boolean(d.enabled ?? false);
-  const time = String(d.time ?? '14:45').trim();
-  if (!HHMM_RE.test(time)) throw new Error('daily_report.time 格式应为 HH:MM，如 14:45');
-  const closeRaw = String(d.close_time ?? '').trim();
-  if (closeRaw && !HHMM_RE.test(closeRaw)) {
-    throw new Error('daily_report.close_time 格式应为 HH:MM，如 15:00');
-  }
-  const autoExit = Boolean(d.auto_exit ?? true);
-  const maPeriods = (d.ma_periods ?? [5, 10, 20, 60]) as unknown;
-  if (
-    !Array.isArray(maPeriods) ||
-    maPeriods.length === 0 ||
-    !maPeriods.every((p) => Number.isInteger(p) && (p as number) > 0)
-  ) {
-    throw new Error('daily_report.ma_periods 必须是正整数列表');
-  }
-  return {
-    enabled,
-    time,
-    close_time: closeRaw || null,
-    auto_exit: autoExit,
-    ma_periods: [...(maPeriods as number[])].sort((a, b) => a - b),
+    event_notify: eventNotify,
   };
 }
 
@@ -255,7 +215,6 @@ export function parseConfig(jsonText: string): AppConfig {
     webhooks: parseWebhooks(cfg.webhooks),
     stocks: parseStocks(cfg.stocks),
     stock_push: parseStockPush(cfg.stock_push),
-    daily_report: parseDailyReport(cfg.daily_report),
   };
 }
 
