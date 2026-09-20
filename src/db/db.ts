@@ -151,6 +151,25 @@ export function getArticleById(id: number): Article | undefined {
   return getDb().prepare('SELECT * FROM articles WHERE id = ?').get(id) as Article | undefined;
 }
 
+/**
+ * 清理历史文章：每个订阅源仅保留最新 keepCount 条（其余删除）。
+ * 推送完成后的行不再被读取，保留少量仅作去重兜底。
+ * 返回删除的行数；随后执行 WAL checkpoint 将空间归还磁盘。
+ */
+export function cleanupOldArticles(keepCount: number): number {
+  const result = getDb().prepare(
+    `DELETE FROM articles
+     WHERE id NOT IN (
+       SELECT id FROM (
+         SELECT id, ROW_NUMBER() OVER (PARTITION BY subscription_url ORDER BY id DESC) AS rn
+         FROM articles
+       ) WHERE rn <= ?
+     )`
+  ).run(keepCount);
+  getDb().pragma('wal_checkpoint(TRUNCATE)');
+  return result.changes;
+}
+
 // ===== 爬取状态（去重缓存） =====
 
 export function getCrawlState(subscriptionUrl: string): CrawlState | undefined {

@@ -1,6 +1,6 @@
 import path from 'path';
-import { loadConfig } from './config';
-import { initDb } from './db/db';
+import { loadConfig, AppConfig } from './config';
+import { initDb, cleanupOldArticles } from './db/db';
 import { logInfo, logSuccess, logError } from './log';
 import { startScheduler, triggerPoll } from './scheduler';
 import { startStockScheduler, runQuotesNow, pushStockNotice } from './stock/scheduler';
@@ -62,6 +62,33 @@ async function runPollMode(args: CliArgs): Promise<number> {
 
 // ===== 常驻模式 =====
 
+/** 每日 03:00 清理过期文章：计算距下一次 3 点的毫秒数 */
+function msUntilNext3am(): number {
+  const now = new Date();
+  const next = new Date(now);
+  next.setHours(3, 0, 0, 0);
+  if (next <= now) next.setDate(next.getDate() + 1);
+  return next.getTime() - now.getTime();
+}
+
+function startDailyCleanup(config: AppConfig): void {
+  const keepCount = config.cleanup?.keep_count ?? 50;
+  const run = () => {
+    try {
+      const removed = cleanupOldArticles(keepCount);
+      if (removed > 0) {
+        logInfo('system', `每日清理完成: 删除 ${removed} 篇旧文章（每源保留最新 ${keepCount} 条）`);
+      }
+    } catch (err) {
+      logError('system', `每日清理失败: ${(err as Error).message}`);
+    }
+  };
+  setTimeout(() => {
+    run();
+    setInterval(run, 24 * 60 * 60 * 1000);
+  }, msUntilNext3am()).unref();
+}
+
 function runDaemon(args: CliArgs): void {
   const config = loadConfig(args.configPath);
   logInfo('system', `已加载 ${config.subscriptions.length} 个订阅源、${config.webhooks.length} 个 Webhook、${config.stocks.length} 个股票标的`);
@@ -71,6 +98,9 @@ function runDaemon(args: CliArgs): void {
 
   // 启动股票监控调度
   startStockScheduler(config);
+
+  // 每日 03:00 清理过期文章
+  startDailyCleanup(config);
 
   logSuccess('system', 'RSS Station 常驻运行中（Ctrl+C 退出）');
 }

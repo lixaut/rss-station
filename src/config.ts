@@ -52,6 +52,11 @@ export interface AppConfig {
   webhooks: WebhookConfig[];
   stocks: StockItemConfig[];
   stock_push: StockPushConfig;
+  /** 数据库清理配置（可选） */
+  cleanup?: {
+    /** 每个订阅源保留的最新文章条数，超过则删除；默认 50 */
+    keep_count?: number;
+  };
 }
 
 // ===== 常量与默认值 =====
@@ -198,6 +203,16 @@ function parseStockPush(raw: unknown): StockPushConfig {
   };
 }
 
+function parseCleanup(raw: unknown): AppConfig['cleanup'] {
+  if (raw === undefined) return undefined;
+  const c = asObject(raw, 'cleanup');
+  const keepCount = Number(c.keep_count ?? 50);
+  if (!Number.isFinite(keepCount) || keepCount <= 0) {
+    throw new Error('cleanup.keep_count 必须是大于 0 的数字');
+  }
+  return { keep_count: keepCount };
+}
+
 /**
  * 从 JSON 文本解析并校验完整配置，失败抛出带明确信息的 Error。
  * 配置文件结构见 config.json 示例。
@@ -215,6 +230,7 @@ export function parseConfig(jsonText: string): AppConfig {
     webhooks: parseWebhooks(cfg.webhooks),
     stocks: parseStocks(cfg.stocks),
     stock_push: parseStockPush(cfg.stock_push),
+    cleanup: parseCleanup(cfg.cleanup),
   };
 }
 

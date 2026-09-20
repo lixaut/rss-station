@@ -60,6 +60,7 @@ market_claims.md         # 市场观点验证台账（第三方观点/预测按�
 - 表：`articles`、`crawl_state`
 - **时间字段统一用 `datetime('now','localtime')`**，新增表必须遵循
 - `articles` 去重唯一索引：`(subscription_url, guid)`；`crawl_state` 以 `subscription_url` 为主键存最近 5 条 GUID 缓存
+- **articles 表自动清理**：常驻模式每天 03:00 清理旧文章，每个订阅源仅保留最新 `cleanup.keep_count`（config.json 可选，默认 50）条，并执行 WAL checkpoint 归还磁盘；一次性模式（`--poll`/`--once`）不触发清理。推送完成后的行不再被读取，保留少量仅作去重兜底
 - **配置不存数据库**：所有配置（订阅/Webhook/股票）都从 config.json 读取，数据库只存运行时状态
 - 表结构变更走 `db.ts` 内迁移模式（`CREATE TABLE IF NOT EXISTS`），不能删库
 
