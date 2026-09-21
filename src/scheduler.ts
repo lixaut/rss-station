@@ -10,6 +10,7 @@ import { fetchFeed } from './rss/fetcher';
 import { scrapePage, fetchArticleContent, ScrapeRule } from './scraper/scraper';
 import { detectNewArticles } from './rss/detector';
 import { pushToAllWebhooks, stripHtml } from './webhook/sender';
+import { isQuietHours } from './quiet_hours';
 
 /** 每个订阅源的定时器 map（key: 订阅 URL） */
 const timers = new Map<string, ReturnType<typeof setInterval>>();
@@ -17,7 +18,13 @@ const timers = new Map<string, ReturnType<typeof setInterval>>();
 /**
  * 轮询单个订阅源
  */
-async function pollSubscription(sub: SubscriptionConfig, webhooks: WebhookConfig[]): Promise<void> {
+async function pollSubscription(sub: SubscriptionConfig, webhooks: WebhookConfig[], quiet?: AppConfig['quiet_hours']): Promise<void> {
+  // 免打扰时段：整轮跳过（不抓取、不入库、不推送），下次轮询到点自然恢复
+  if (isQuietHours(new Date(), quiet)) {
+    logInfo('news', `免打扰时段（${quiet!.start} ~ ${quiet!.end}），跳过 ${sub.name}`);
+    return;
+  }
+
   const { url, name, type, scrape_rules } = sub;
 
   let feedTitle: string;
@@ -130,7 +137,7 @@ async function pollAll(config: AppConfig): Promise<void> {
 
   // 并行抓取所有订阅源
   await Promise.allSettled(
-    subs.map((sub: SubscriptionConfig) => pollSubscription(sub, config.webhooks))
+    subs.map((sub: SubscriptionConfig) => pollSubscription(sub, config.webhooks, config.quiet_hours))
   );
 
   logInfo('news', '本轮轮询结束');
@@ -164,10 +171,10 @@ export function startScheduler(config: AppConfig): void {
     logInfo('system', `  - ${sub.name} (${sub.type}) 每 ${minutes} 分钟轮询一次`);
 
     // 立即执行一次
-    pollSubscription(sub, config.webhooks);
+    pollSubscription(sub, config.webhooks, config.quiet_hours);
 
     // 创建定时器
-    const timer = setInterval(() => pollSubscription(sub, config.webhooks), intervalMs);
+    const timer = setInterval(() => pollSubscription(sub, config.webhooks, config.quiet_hours), intervalMs);
     timers.set(sub.url, timer);
   }
 }

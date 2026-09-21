@@ -57,6 +57,8 @@ export interface AppConfig {
     /** 每个订阅源保留的最新文章条数，超过则删除；默认 50 */
     keep_count?: number;
   };
+  /** 免打扰时段（可选）：时段内 RSS 轮询整轮跳过（不抓取不入库不推送） */
+  quiet_hours?: { start: string; end: string };
 }
 
 // ===== 常量与默认值 =====
@@ -214,6 +216,24 @@ function parseCleanup(raw: unknown): AppConfig['cleanup'] {
 }
 
 /**
+ * 解析免打扰时段（可选）。时段内 RSS 轮询整轮跳过（不抓取不入库不推送）。
+ * 允许跨午夜（如 22:00 ~ 08:00），start 与 end 相同视为未配置。
+ */
+function parseQuietHours(raw: unknown): AppConfig['quiet_hours'] {
+  if (raw === undefined) return undefined;
+  const q = asObject(raw, 'quiet_hours');
+  const start = String(q.start ?? '').trim();
+  const end = String(q.end ?? '').trim();
+  if (!HHMM_RE.test(start) || !HHMM_RE.test(end)) {
+    throw new Error('quiet_hours.start / quiet_hours.end 格式应为 HH:MM，如 22:00');
+  }
+  if (toMinutes(start) === toMinutes(end)) {
+    throw new Error('quiet_hours.start 不能等于 quiet_hours.end（相同视为未配置，请直接省略 quiet_hours）');
+  }
+  return { start, end };
+}
+
+/**
  * 从 JSON 文本解析并校验完整配置，失败抛出带明确信息的 Error。
  * 配置文件结构见 config.json 示例。
  */
@@ -231,6 +251,7 @@ export function parseConfig(jsonText: string): AppConfig {
     stocks: parseStocks(cfg.stocks),
     stock_push: parseStockPush(cfg.stock_push),
     cleanup: parseCleanup(cfg.cleanup),
+    quiet_hours: parseQuietHours(cfg.quiet_hours),
   };
 }
 

@@ -9,6 +9,7 @@ import {
   formatNoticeLarkCard,
 } from './formatter';
 import { detectTimePeriod } from './time_period';
+import { isQuietHours } from '../quiet_hours';
 
 // ===== 推送通道（console / lark） =====
 
@@ -103,6 +104,8 @@ let closeNotified = false; // 当天是否已发收盘通知
 /** 推送一条生命周期通知（受 event_notify 开关控制），失败仅记日志，不阻塞调用方 */
 function pushLifecycleNotice(config: AppConfig, title: string, lines: string[]): void {
   if (!config.stock_push.event_notify) return;
+  // 免打扰时段不推通知（行情推送本身只发生在交易时段，不在此列）
+  if (isQuietHours(new Date(), config.quiet_hours)) return;
   const notice = {
     console: formatNoticeConsole(title, lines),
     lark: formatNoticeLarkCard(title, lines),

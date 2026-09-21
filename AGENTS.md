@@ -37,6 +37,7 @@ src/
 ├── config.ts             # config.json 解析校验（parseConfig / loadConfig）+ dbPath
 ├── db/db.ts              # SQLite：articles（文章）、crawl_state（去重缓存）
 ├── scheduler.ts          # RSS 轮询调度器（每订阅源独立定时器，key=订阅 URL）
+├── quiet_hours.ts        # 免打扰时段判断（isQuietHours，支持跨午夜区间）
 ├── rss/                  # fetcher（抓取解析）、detector（增量检测）
 ├── scraper/scraper.ts    # 网页抓取模式（CSS 选择器）
 ├── webhook/sender.ts     # 多平台 Webhook 发送（webhooks 由 config 传入）
@@ -62,6 +63,7 @@ market_claims.md         # 市场观点验证台账（第三方观点/预测按�
 - `articles` 去重唯一索引：`(subscription_url, guid)`；`crawl_state` 以 `subscription_url` 为主键存最近 5 条 GUID 缓存
 - **articles 表自动清理**：常驻模式每天 03:00 清理旧文章，每个订阅源仅保留最新 `cleanup.keep_count`（config.json 可选，默认 50）条，并执行 WAL checkpoint 归还磁盘；一次性模式（`--poll`/`--once`）不触发清理。推送完成后的行不再被读取，保留少量仅作去重兜底
 - **配置不存数据库**：所有配置（订阅/Webhook/股票）都从 config.json 读取，数据库只存运行时状态
+- **免打扰时段**（`config.json` 可选 `quiet_hours: {start, end}`，HH:MM，支持跨午夜如 22:00~08:00）：时段内 RSS 轮询整轮跳过（不抓取不入库不推送），股票生命周期通知静默；行情推送只在交易时段，天然不受影响。判断函数在 `src/quiet_hours.ts`
 - 表结构变更走 `db.ts` 内迁移模式（`CREATE TABLE IF NOT EXISTS`），不能删库
 
 ## 开发约定与规则
