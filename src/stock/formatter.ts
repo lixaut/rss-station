@@ -88,18 +88,20 @@ function priceOf(q: Quote): string {
 }
 
 function priceLabel(q: Quote): string {
-  return q.type === 'index' ? '点位' : '现价';
+  if (q.type === 'index') return '点位';
+  if (q.type === 'gold') return '金价';
+  return '现价';
 }
 
 function changePct(q: Quote): string {
   return signed(q.change_pct, '%');
 }
 
-/** 按 股票/指数 分组（组内保持配置顺序） */
+/** 按 股票/指数/黄金 分组（组内保持配置顺序） */
 function groupQuotes(quotes: Quote[]): Record<string, Quote[]> {
-  const groups: Record<string, Quote[]> = { 股票: [], 指数: [] };
+  const groups: Record<string, Quote[]> = { 股票: [], 指数: [], 黄金: [] };
   for (const q of quotes) {
-    const key = q.type === 'index' ? '指数' : '股票';
+    const key = q.type === 'index' ? '指数' : q.type === 'gold' ? '黄金' : '股票';
     groups[key].push(q);
   }
   return groups;

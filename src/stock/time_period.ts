@@ -1,4 +1,5 @@
 import { AppConfig } from '../config';
+import { isStockTradeDay } from './trading_calendar';
 
 export type TimePeriod =
   | 'pre_market'
@@ -12,11 +13,6 @@ interface TimePeriodResult {
   period: TimePeriod;
   title: string;
   lines: string[];
-}
-
-function isTradeDay(d: Date): boolean {
-  const day = d.getDay();
-  return day >= 1 && day <= 5;
 }
 
 function parseHHMM(text: string): [number, number] {
@@ -51,23 +47,23 @@ export function detectTimePeriod(config: AppConfig): TimePeriodResult {
   const startMin = toMinutes(sh, sm);
   const endMin = toMinutes(eh, em);
 
-  if (!isTradeDay(now)) {
-    return {
+  if (!isStockTradeDay(now)) {
+    return withGoldNote(config, {
       period: 'non_trading_day',
       title: '📅 今日休市',
-      lines: [`今日非交易日，不推送行情。RSS 订阅照常运行。`],
-    };
+      lines: [`今日 A 股非交易日，不推送股票行情。RSS 订阅照常运行。`],
+    });
   }
 
   if (t < startMin) {
     const minutesLeft = startMin - t;
-    return {
+    return withGoldNote(config, {
       period: 'pre_market',
       title: '⏳ 盘前待命',
       lines: [
         `服务已启动，距 ${settings.start_time} 开盘还有 ${minutesLeft} 分钟，到时准时推送行情。RSS 订阅已正常轮询。`,
       ],
-    };
+    });
   }
 
   if (t < morningEnd) {
@@ -81,13 +77,13 @@ export function detectTimePeriod(config: AppConfig): TimePeriodResult {
   }
 
   if (t < afternoonStart) {
-    return {
+    return withGoldNote(config, {
       period: 'lunch_break',
       title: '🌤 午间休市',
       lines: [
-        `午间休市（${settings.start_time} - ${settings.end_time}），${afternoonStart >= 13 * 60 ? '13:00' : '下午开盘时间'} 前不推送行情，RSS 订阅照常运行。`,
+        `午间休市（${settings.start_time} - ${settings.end_time}），${afternoonStart >= 13 * 60 ? '13:00' : '下午开盘时间'} 前不推送股票行情，RSS 订阅照常运行。`,
       ],
-    };
+    });
   }
 
   if (t < endMin) {
@@ -100,11 +96,22 @@ export function detectTimePeriod(config: AppConfig): TimePeriodResult {
     };
   }
 
-  return {
+  return withGoldNote(config, {
     period: 'post_market',
     title: '🌙 今日已收盘',
     lines: [
-      `已过收盘时间（${settings.end_time}），行情推送结束。RSS 订阅照常运行，如需明日盯盘请重启服务。`,
+      `已过收盘时间（${settings.end_time}），股票行情推送结束。RSS 订阅照常运行，如需明日盯盘请重启服务。`,
     ],
+  });
+}
+
+/** 配置了黄金标的时，在股票不推送的时段补充黄金推送安排说明 */
+function withGoldNote(config: AppConfig, result: TimePeriodResult): TimePeriodResult {
+  const hasGold = config.stocks.some((i) => i.type === 'gold');
+  if (!hasGold) return result;
+  const quiet = config.quiet_hours ? `${config.quiet_hours.start}~${config.quiet_hours.end}` : '未配置';
+  return {
+    ...result,
+    lines: [...result.lines, `黄金每小时整点推送一次（免打扰时段 ${quiet} 不推），不受 A 股休市影响（周末除外）。`],
   };
 }

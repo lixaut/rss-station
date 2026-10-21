@@ -30,8 +30,8 @@ export interface WebhookConfig {
 
 export interface StockItemConfig {
   code: string;
-  market: 'sh' | 'sz';
-  type: 'stock' | 'index';
+  market: 'sh' | 'sz' | 'hf';
+  type: 'stock' | 'index' | 'gold';
   alias: string;
 }
 
@@ -65,7 +65,8 @@ export interface AppConfig {
 
 const WEBHOOK_TEMPLATES = ['text', 'markdown', 'json', 'feishu'];
 const STOCK_CHANNELS = ['console', 'lark'];
-const KINDS = ['stock', 'index'];
+const KINDS = ['stock', 'index', 'gold'];
+const MARKETS = ['sh', 'sz', 'hf'];
 const HHMM_RE = /^\d{1,2}:\d{2}$/;
 
 /** "HH:MM" → 当日分钟数，用于时间先后比较 */
@@ -85,10 +86,13 @@ const DEFAULT_STOCK_PUSH: StockPushConfig = {
   event_notify: true,
 };
 
-/** 未显式指定市场时按代码前缀推断（股票：6/9 开头为 sh；指数：399 开头为 sz，其余为 sh） */
-export function inferMarket(code: string, kind: string): 'sh' | 'sz' {
-  if (kind === 'index') return code.startsWith('399') ? 'sz' : 'sh';
-  return code.startsWith('6') || code.startsWith('9') ? 'sh' : 'sz';
+/** 未显式指定市场时按代码推断（指数：399 开头为 sz；国内：6/9 股票、5 基金/ETF 为 sh，其余为 sz；字母代码为外盘 hf，如 GC/XAU） */
+export function inferMarket(code: string, kind: string): 'sh' | 'sz' | 'hf' {
+  if (/^[0-9]+$/.test(code)) {
+    if (kind === 'index') return code.startsWith('399') ? 'sz' : 'sh';
+    return code.startsWith('6') || code.startsWith('9') || code.startsWith('5') ? 'sh' : 'sz';
+  }
+  return 'hf';
 }
 
 // ===== 解析与校验 =====
@@ -153,14 +157,14 @@ function parseStocks(raw: unknown): StockItemConfig[] {
       throw new Error(`stocks[${i}] 的 type 仅支持: ${KINDS.join(', ')}`);
     }
     const marketRaw = String(s.market ?? '').trim().toLowerCase();
-    const market = (marketRaw || inferMarket(code, kind)) as 'sh' | 'sz';
-    if (market !== 'sh' && market !== 'sz') {
-      throw new Error(`stocks[${i}] 的 market 必须是 sh 或 sz，当前: ${market}`);
+    const market = marketRaw || inferMarket(code, kind);
+    if (!MARKETS.includes(market)) {
+      throw new Error(`stocks[${i}] 的 market 必须是 ${MARKETS.join(' / ')}，当前: ${market}`);
     }
     return {
       code,
-      market,
-      type: kind as 'stock' | 'index',
+      market: market as StockItemConfig['market'],
+      type: kind as StockItemConfig['type'],
       alias: String(s.alias ?? '').trim() || code,
     };
   });

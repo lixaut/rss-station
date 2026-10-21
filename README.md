@@ -92,7 +92,7 @@ npm start
 | `npm run once` | 跑一轮 RSS 轮询 + 一次行情推送后退出（验证用） |
 | `node dist/index.js -c 路径.json` | 指定配置文件（默认项目根目录 config.json） |
 
-> 💡 常驻模式下，行情按时间窗推送（上午 `start_time`～11:30 + 下午 13:00～`end_time`），收盘后自动停止当日推送，服务继续运行等待次日；`stock_push.event_notify` 开启时还会根据当前时段推送差异化启动提示，并在午间休市 / 下午开盘 / 收盘 / 退出时推送温馨提醒。
+> 💡 常驻模式下，股票/指数按 A 股时间窗推送（上午 `start_time`～11:30 + 下午 13:00～`end_time`，周末及法定节假日休市），收盘后自动停止当日推送，服务继续运行等待次日；黄金独立于股市时间，每小时整点推送一次（免打扰时段不推，周末及 A 股节假日照常，国际金节假日在交易）；`stock_push.event_notify` 开启时还会根据当前时段推送差异化启动提示，并在午间休市 / 下午开盘 / 收盘 / 退出时推送温馨提醒。
 
 ---
 
@@ -119,7 +119,9 @@ npm start
   ],
   "stocks": [
     { "code": "000300", "market": "sh", "type": "index", "alias": "沪深300" },
-    { "code": "600519", "market": "sh", "type": "stock", "alias": "贵州茅台" }
+    { "code": "600519", "market": "sh", "type": "stock", "alias": "贵州茅台" },
+    { "code": "XAU", "market": "hf", "type": "gold", "alias": "国际黄金" },
+    { "code": "518880", "market": "sh", "type": "gold", "alias": "国内黄金" }
   ],
   "stock_push": {
     "interval_seconds": 120,
@@ -143,18 +145,20 @@ npm start
 |---|---|
 | `subscriptions[]` | RSS 订阅源列表：`name`（名称）、`url`（RSS 或网页地址）、`type`（`rss`/`scrape`）、`scrape_rules`（scrape 类型的 CSS 选择器）、`interval_minutes`（轮询间隔分钟） |
 | `webhooks[]` | 推送 Webhook 列表：`name`、`url`、`template`（`text`/`markdown`/`json`/`feishu`） |
-| `stocks[]` | 股票/指数列表：`code`（如 `600519`、`000300`）、`market`（`sh`/`sz`，省略时按代码推断）、`type`（`stock`/`index`）、`alias`（展示名） |
+| `stocks[]` | 行情标的列表：`code`（如 `600519`、`000300`、黄金 `XAU`）、`market`（`sh`/`sz`/`hf`，省略时按代码推断：数字代码为国内、字母代码为外盘）、`type`（`stock`/`index`/`gold`）、`alias`（展示名） |
 | `stock_push.interval_seconds` | 行情推送间隔（秒），必须大于 0 |
 | `stock_push.channel` | 推送通道：`console` / `lark`（飞书机器人 Webhook） |
 | `stock_push.webhook_url` | `lark` 通道必填 |
 | `stock_push.start_time` | 行情推送开始时间 `HH:MM`（默认 `09:30`，到达后准点推送首次；窗口外不推送） |
 | `stock_push.end_time` | 行情推送结束时间 `HH:MM`（默认 `15:00`，收盘后停止推送） |
 | `stock_push.event_notify` | 生命周期通知开关（默认 `true`）：启动时按当前时段推送差异化提示（盘前/早盘/午间休市/午盘/盘后/休市）/ 午间休市(11:30) / 下午开盘(13:00) / 收盘(15:00) / 退出前各推送一条温馨提示 |
-| `stock_push` 时间窗 | 按 A 股交易时段推送：上午 `start_time`～`11:30` + 下午 `13:00`～`end_time`，午间 11:30–13:00 休市不推送 |
+| `stock_push` 时间窗 | 股票/指数按 A 股交易时段推送：上午 `start_time`～`11:30` + 下午 `13:00`～`end_time`，午间 11:30–13:00 休市不推送；周末与法定节假日休市（节假日数据内置至 2026 年，次年通知发布后需更新 `src/stock/trading_calendar.ts`，未收录年份仅按周一~周五判断并告警） |
 | `cleanup.keep_count` | 每个订阅源保留的最新文章条数（默认 `50`）。常驻模式每天 03:00 自动清理各源超出的旧文章并回收 SQLite 空间；省略 `cleanup` 时用默认值 |
-| `quiet_hours` | 免打扰时段（可选）：`start`/`end` 为 `HH:MM`，支持跨午夜（如 `22:00`~`08:00`）。时段内 RSS 轮询整轮跳过（不抓取、不入库、不推送），股票生命周期通知也静默；行情推送本身只发生在交易时段（09:30~15:00），不受影响。省略则全天推送 |
+| `quiet_hours` | 免打扰时段（可选）：`start`/`end` 为 `HH:MM`，支持跨午夜（如 `22:00`~`08:00`）。时段内 RSS 轮询整轮跳过（不抓取、不入库、不推送），股票生命周期通知也静默，黄金整点推送同样跳过（即"睡觉时间"不推黄金）。股票行情推送本身只发生在交易时段（09:30~15:00），不受影响。省略则黄金全天（工作日）整点推送 |
 
 常见指数代码：上证指数 `000001`(sh)、深证成指 `399001`(sz)、创业板指 `399006`(sz)、沪深300 `000300`(sh)、上证50 `000016`(sh)、中证500 `000905`(sh)、有色金属 `000819`(sh)、创新药械 `399265`(sz)、机器人产业 `980022`(sz)、半导体 `980017`(sz)。
+
+黄金标的（`type` 为 `gold`，单独分组为「黄金」并**独立调度**）：国际黄金用外盘代码 `market: "hf"`——伦敦金现货 `XAU`（美元/盎司）、纽约黄金期货 `GC`（美元/盎司）；国内黄金用黄金 ETF——`518880` 华安黄金ETF(sh)、`159934` 易方达黄金ETF(sz)、`518800` 国泰黄金ETF(sh)（元/份）。字母代码省略 `market` 时自动推断为 `hf`。推送节奏：**每小时整点推送一次**（周一~周五；免打扰时段 `quiet_hours` 不推；不受 A 股午休/节假日/时间窗限制，周末国际金休市不推）。注意：国内黄金 ETF 在非 A 股时段推送时显示最近收盘价。
 
 ---
 

@@ -15,7 +15,9 @@
     }
   ],
   "stocks": [
-    { "code": "000300", "market": "sh", "type": "index", "alias": "沪深300" }
+    { "code": "000300", "market": "sh", "type": "index", "alias": "沪深300" },
+    { "code": "XAU", "market": "hf", "type": "gold", "alias": "国际黄金" },
+    { "code": "518880", "market": "sh", "type": "gold", "alias": "国内黄金" }
   ],
   "stock_push": {
     "interval_seconds": 120,
