@@ -15,7 +15,7 @@ RSS Station — 纯 CLI（无 Web 端）的 Node.js/TypeScript 应用，通过�
 
 | 命令 | 说明 |
 |---|---|
-| `npm run build` | 编译：`tsc`（输出到 dist/） |
+| `npm run build` | 生产打包：`scripts/build.mjs`（清理 dist → `tsc --noEmitOnError` 编译，带进度动画与成功/失败汇总提示；有类型错误时不产出、退出码非 0） |
 | `npm start` / `npm run monitor` | **常驻运行**：RSS 轮询 + 股票推送 |
 | `npm run poll` | 仅触发一次 RSS 轮询后退出（配合 Windows 计划任务） |
 | `npm run once` | 跑一轮 RSS 轮询 + 一次行情推送后退出（验证用） |
