@@ -77,7 +77,7 @@ market_claims.md         # 市场观点验证台账（第三方观点/预测按�
 6. **Windows 环境**：shell 是 Git Bash；命令行传中文给 curl 会乱码（GBK），测试接口用 `node -e` + `fetch` 或 UTF-8 文件，不要直接用 curl 内联中文。
 7. 不要把敏感信息（webhook URL、token）硬编码进源码或提交；`config.json` 含真实 webhook 地址，**不要提交真实配置**（提交前替换为示例值或使用 `.env` 思路）。
 8. 改动后必跑 `npx tsc --noEmit`（或 `npm run build`）确认无类型错误再交付。
-9. **功能更新后同步更新说明文件**：新增/修改功能时，若涉及用户可见能力（功能、命令、配置）则同步更新 README.md；若涉及结构、约定、流程、坑则同步更新 AGENTS.md。
+9. **功能更新后同步更新说明文件**：新增/修改功能时，若涉及用户可见能力（功能、命令、配置）则同步更新 README.md；若涉及结构、约定、流程、坑则同步更新 AGENTS.md。**config.json 字段结构有增删变化时，必须同步更新 `config.json.example` 与 README 配置说明**——线上部署不走 git，服务器 `config.json` 靠用户按文档手动合并（见 DEPLOY.md「更新版本」）。
 
 ## 日常操作流程
 

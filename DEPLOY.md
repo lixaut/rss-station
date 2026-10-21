@@ -55,14 +55,28 @@ pm2 monit                  # 实时资源监控
 - **数据目录**：`data/rss-station.db`（SQLite WAL 模式）是唯一运行时状态，建议纳入备份（如每日 crontab 拷贝）；备份前建议先 `pm2 stop` 保证一致性，或直接拷贝 WAL 模式下的三个文件（`*.db`、`*.db-wal`、`*.db-shm`）。
 - **验证配置不要用真实 webhook**：测试时把 `webhooks` 置空、`stock_push.channel` 改为 `console`，避免打扰真实群聊。
 - **推送失败不中断**：单次推送失败只记日志，服务继续运行。
-- **磁盘占用**：`articles`/`crawl_state` 表暂无自动清理逻辑，长期运行关注 `data/` 体积。
+- **磁盘占用**：`articles` 表每天 03:00 自动清理（每个订阅源保留最新 `cleanup.keep_count` 条，默认 50），`crawl_state` 恒为小表；长期运行仍建议关注 `data/` 体积。
 
 ## 五、更新版本
 
 ```bash
 cd rss-station
 git pull
+# 先看本次更新是否改了配置结构（新增/删除字段、示例值变化）
+git diff HEAD@{1} -- config.json.example README.md
 npm install               # 依赖有变化时需要；better-sqlite3 版本变更时会在服务器重新编译
 npm run build
-pm2 restart rss-station
 ```
+
+**同步配置文件（重要）**：服务器上的 `config.json` 含真实 webhook，不在 git 中，`git pull` **不会**更新它。若上面 diff 显示配置结构有变化，需手动把新字段合并进服务器的 `config.json`：
+
+- 字段说明见 README「配置说明」章节，完整示例见仓库内 `config.json.example`
+- 只增删需要的字段，保留服务器上已有的真实值（webhook 地址、订阅源、股票标的等）
+- 改完先校验再重启：
+
+```bash
+npm run once              # 验证配置能正常加载、行情能推送（测试可临时把 channel 改 console）
+pm2 restart rss-station   # 配置改动必须重启才生效
+```
+
+配置结构长期未变时，直接 `pm2 restart rss-station` 即可。
