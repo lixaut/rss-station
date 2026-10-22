@@ -1,6 +1,6 @@
 import axios from 'axios';
 import { AppConfig, StockItemConfig, StockPushConfig } from '../config';
-import { logInfo, logSuccess, logError, logBlock } from '../log';
+import { logInfo, logSuccess, logError, logWarn, logBlock } from '../log';
 import { fetchQuotes, StockItem } from './quote';
 import {
   formatConsole,
@@ -30,20 +30,41 @@ class ConsolePusher implements Pusher {
   }
 }
 
+/** 可重试的瞬时错误：飞书整点/半点限流（11232 frequency limited）、内部错误、HTTP 429/5xx、网络超时 */
+const TRANSIENT_ERROR = /frequency limited|internal error|HTTP (429|5\d\d)|ETIMEDOUT|ECONNRESET|ECONNREFUSED|timeout/i;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 class LarkPusher implements Pusher {
   constructor(private webhookUrl: string, private timeout = 5000) {}
 
   private async post(payload: unknown): Promise<void> {
-    let result: any;
-    try {
-      const resp = await axios.post(this.webhookUrl, payload, { timeout: this.timeout });
-      result = resp.data;
-    } catch (err) {
-      throw new PusherError(`飞书推送失败: ${(err as Error).message}`);
+    const maxAttempts = 3;
+    let lastError = new PusherError('飞书推送失败');
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      let transient = false;
+      try {
+        const resp = await axios.post(this.webhookUrl, payload, { timeout: this.timeout });
+        const result: any = resp.data;
+        if (result && typeof result === 'object' && result.code !== undefined && result.code !== 0) {
+          lastError = new PusherError(`飞书推送失败: ${result.msg || JSON.stringify(result)}`);
+          transient = TRANSIENT_ERROR.test(lastError.message);
+        } else {
+          return;
+        }
+      } catch (err: any) {
+        const msg = err.response ? `HTTP ${err.response.status}` : (err as Error).message;
+        lastError = new PusherError(`飞书推送失败: ${msg}`);
+        transient = TRANSIENT_ERROR.test(msg);
+      }
+      if (!transient || attempt === maxAttempts) throw lastError;
+      const delay = 3000 * attempt + Math.floor(Math.random() * 4000);
+      logWarn('stock', `飞书瞬时限流，${Math.round(delay / 1000)}s 后重试 (${attempt}/${maxAttempts}): ${lastError.message}`);
+      await sleep(delay);
     }
-    if (result && typeof result === 'object' && result.code !== undefined && result.code !== 0) {
-      throw new PusherError(`飞书推送失败: ${result.msg || JSON.stringify(result)}`);
-    }
+    throw lastError;
   }
 
   async push(quotes: any): Promise<void> {
@@ -244,11 +265,16 @@ function checkGoldQuotePush(config: AppConfig): void {
   const key = `${localDateKey(now)}-${now.getHours()}`;
   if (key === lastGoldPushKey) return;
   lastGoldPushKey = key;
-  runGoldQuotesNow(config)
-    .then((n) => {
-      if (n > 0) logSuccess('stock', `黄金整点行情推送成功 ${n} 个标的`);
-    })
-    .catch((err) => logError('stock', `黄金行情推送失败: ${(err as Error).message}`));
+  // 避开整点：飞书在整点是全员发送高峰，延后随机 5~25 秒再发，显著降低 11232 限流概率
+  const delay = 5000 + Math.floor(Math.random() * 20000);
+  setTimeout(() => {
+    if (!canPushGold(new Date(), config)) return;
+    runGoldQuotesNow(config)
+      .then((n) => {
+        if (n > 0) logSuccess('stock', `黄金整点行情推送成功 ${n} 个标的`);
+      })
+      .catch((err) => logError('stock', `黄金行情推送失败: ${(err as Error).message}`));
+  }, delay);
 }
 
 /** 启动股票调度器（股票按 A 股时间窗推送；黄金每小时整点推送，免打扰时段除外） */
